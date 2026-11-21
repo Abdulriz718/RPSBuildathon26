@@ -1,9 +1,12 @@
 """Static map model: terrain height, buildings, line of sight. Owner: A."""
-import json
-import os
+import math
 import sys
 
 import numpy as np
+
+import gridbuild
+
+LOS_STEP = 1.0  # m between samples along a sight line
 
 
 class World:
@@ -18,15 +21,20 @@ class World:
         return FlatWorld()
 
     def __init__(self, map_dir: str):
-        with open(os.path.join(map_dir, "v2", "world.json")) as f:
-            w = json.load(f)
-        t = w["terrain"]
-        self.min_x, self.min_y = t["minX"], t["minY"]
-        self.step, self.nx, self.ny = t["step"], t["nx"], t["ny"]
-        raw = np.fromfile(os.path.join(map_dir, "v2", t["file"]), dtype="<i2")
-        self.terrain = raw.reshape(self.ny, self.nx).astype(np.float32) * t.get("scale", 0.01)
-        self.prisms = w["prisms"]
-        self.bounds = w["bounds"]
+        g = gridbuild.build(map_dir)
+        self.min_x, self.min_y, self.step, nx, ny = g["meta"]
+        self.nx, self.ny = int(nx), int(ny)
+        self.terrain = g["terrain"]
+        self.solid = g["solid"]  # top of grounded solids, else terrain
+        self.ob, self.ot = g["ob"], g["ot"]  # overhead band
+        self.max_x = self.min_x + (self.nx - 1) * self.step
+        self.max_y = self.min_y + (self.ny - 1) * self.step
+
+    # ---- point queries -------------------------------------------------
+    def cell(self, x: float, y: float):
+        i = int(round((x - self.min_x) / self.step))
+        j = int(round((y - self.min_y) / self.step))
+        return min(max(i, 0), self.nx - 1), min(max(j, 0), self.ny - 1)
 
     def ground(self, x: float, y: float) -> float:
         """Terrain height at (x, y), bilinear. Ignores buildings."""
@@ -40,16 +48,54 @@ class World:
             + h[j + 1, i] * (1 - dx) * dy + h[j + 1, i + 1] * dx * dy
         )
 
+    def surface(self, x: float, y: float) -> float:
+        """Highest grounded surface at (x, y): roof top or terrain."""
+        i, j = self.cell(x, y)
+        return float(self.solid[j, i])
+
+    def in_bounds(self, x: float, y: float) -> bool:
+        return self.min_x <= x <= self.max_x and self.min_y <= y <= self.max_y
+
+    # ---- sight lines ---------------------------------------------------
+    def _blocked(self, a, b):
+        """Bool array over samples from a to b: True where the segment is inside solid."""
+        ax, ay, az = a
+        bx, by, bz = b
+        n = max(2, int(math.dist(a, b) / LOS_STEP) + 1)
+        s = np.linspace(0.0, 1.0, n)[1:-1]  # skip both endpoints (they sit on mechs)
+        xs, ys, zs = ax + (bx - ax) * s, ay + (by - ay) * s, az + (bz - az) * s
+        i = np.clip(np.rint((xs - self.min_x) / self.step).astype(np.int32), 0, self.nx - 1)
+        j = np.clip(np.rint((ys - self.min_y) / self.step).astype(np.int32), 0, self.ny - 1)
+        return (zs < self.solid[j, i]) | ((zs >= self.ob[j, i]) & (zs <= self.ot[j, i])), s
+
     def los(self, a, b) -> bool:
-        """Line of sight between two 3D points. Stub: always True until the height grid lands (Phase 1)."""
-        return True
+        """True if nothing solid (building, terrain, bridge) is between 3D points a and b. Trees ignored."""
+        blocked, _ = self._blocked(a, b)
+        return not blocked.any()
+
+    def ray_hit(self, a, b):
+        """Fraction 0..1 along a->b of the first solid sample, or None if clear."""
+        blocked, s = self._blocked(a, b)
+        idx = np.flatnonzero(blocked)
+        return float(s[idx[0]]) if idx.size else None
 
 
 class FlatWorld:
     """Fallback when the map can't be read: flat ground, everything visible."""
 
+    min_x, min_y, max_x, max_y = -512.0, -333.0, 555.0, 388.0
+
     def ground(self, x: float, y: float) -> float:
         return 0.0
 
+    def surface(self, x: float, y: float) -> float:
+        return 0.0
+
+    def in_bounds(self, x: float, y: float) -> bool:
+        return True
+
     def los(self, a, b) -> bool:
         return True
+
+    def ray_hit(self, a, b):
+        return None
