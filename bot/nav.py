@@ -259,6 +259,35 @@ class Nav:
             return True
         return False
 
-    def cover_from(self, pos, threat_pos):
-        """A nearby walkable point with no LOS to threat_pos, or None. Phase 2."""
+    def cover_from(self, pos, threat_pos, zone=None):
+        """Nearest walkable ground point the threat can't see (eye to our chest and head), or None.
+        zone: optional (cx, cy, r) the point must stay inside."""
+        if not self.ok:
+            return None
+        w = self.world
+        x, y = pos[0], pos[1]
+        teye = (threat_pos[0], threat_pos[1], threat_pos[2] + 8.0)
+        d_threat = math.hypot(x - threat_pos[0], y - threat_pos[1])
+        best = None
+        for r in config.COVER_RINGS:
+            for k in range(config.COVER_ANGLES):
+                a = 2 * math.pi * k / config.COVER_ANGLES
+                px, py = x + r * math.cos(a), y + r * math.sin(a)
+                if not w.in_bounds(px, py):
+                    continue
+                i, j = self.to_cell(px, py)
+                c = j * self.cnx + i
+                if not self.main[c] or self.roof[c]:
+                    continue
+                if math.hypot(px - threat_pos[0], py - threat_pos[1]) < d_threat * 0.8:
+                    continue  # don't run toward them
+                if zone and math.hypot(px - zone[0], py - zone[1]) > zone[2]:
+                    continue
+                gz = self.Hl[c]
+                if w.los(teye, (px, py, gz + 4.5)) or w.los(teye, (px, py, gz + 8.5)):
+                    continue
+                if best is None or r < best[0]:
+                    best = (r, px, py)
+            if best:
+                return best[1], best[2]
         return None
