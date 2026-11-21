@@ -122,6 +122,6 @@ Rules:
 - [ ] Create the public GitHub repo, move kit `python/` files to `bot/`, Dockerfile at top (A)
 - [ ] Commit `AGENTS.md` and `CLAUDE.md` pointing to PLAN.md (A)
 - [ ] Stub modules with the interface in §2 (A)
-- [ ] `bench.py` + `replay_eval.py` (B)
+- [x] `bench.py` + `replay_eval.py` (B)
 - [ ] Sandboxed `check.py` passes on the Docker image (A)
 - [ ] Submission #1 (either)
