@@ -14,7 +14,38 @@ TRACK_SHOT_SOUNDS = frozenset({"gun", "mortar", "laser", "laser_charge", "lightn
 GUN_AIM_FRACTION = 0.8          # stay inside this fraction of the target's hit radius
 
 # Upgrade preference, best first. Unknown ids rank after these.
-UPGRADE_PRIORITY = ["armor", "hp", "gun_rate", "laser_damage", "lightning_damage", "mortar_damage", "sensors"]
+UPGRADE_PRIORITY = (
+    "armor", "plating", "gun_damage", "gun_rate", "gun_mag", "gun_velocity",
+    "laser_damage", "laser_charge", "laser_pierce", "mortar_reload", "mortar_splash",
+    "mortar_velocity", "lightning_range", "lightning_efficiency", "lightning_chain",
+    "sensors", "nanites", "servos", "reactor", "jets", "capacitor", "gyros",
+)
+COUNTERS = {"laser": "mortar", "mortar": "lightning", "lightning": "laser"}
+COUNTER_BONUS = 1.35
+COUNTER_PENALTY = 0.7
+LASER_LEAD_S = 0.05
+LASER_MAX_VERTICAL_SPEED = 7.0
+MORTAR_MAX_TRACK_AGE_S = 0.6
+MORTAR_MOVING_FLIGHT_S = 2.5
+MORTAR_STATIONARY_SPEED = 1.0
+MORTAR_SOLVE_PASSES = 5
+MORTAR_SEGMENT_M = 8.0
+MORTAR_PATH_TOLERANCE_M = 1.0
+DODGE_LOOKAHEAD_S = 0.5
+DODGE_BUFFER_M = 0.75
+DODGE_STEP_M = 3.0
+STRAFE_SPEED_FRACTION = 0.55
+COVER_RADII_M = (3, 6, 9, 12)
+COVER_SEARCH_INTERVAL_S = 0.8
+COVER_TARGET_MOVE_M = 6.0
+COVER_LOW_HP = 0.55
+COVER_RECOVER_HP = 0.8
+COVER_REACHED_M = 1.2
+LOOT_WINDOW_S = 60.0
+LOOT_CRATE_RANGE_M = 50.0
+LOOT_VERTICAL_REACH_M = 4.0
+LOOT_ZONE_MARGIN_M = 3.0
+LOOT_PICKUP_BONUS_M = 16.0
 
 # Navigation (nav.py)
 NAV_CELL = 3.0            # m per coarse nav cell

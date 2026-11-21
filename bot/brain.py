@@ -27,8 +27,15 @@ class Brain:
         self.world = World.load(hello["map"]["dir"])
         self.nav = Nav(self.world, cfg.get("mech", {}))
         self.track = Tracker(cfg)
-        self.sim_step = 1 / cfg["match"]["tick_hz"]
+        self.weapons = combat.Weapons(cfg)
+        self.crates = cfg["crates"]
+        self.regen_delay = cfg["mech"]["regen_delay"]
         self.scan_yaw = None
+        self.cover = None
+        self.cover_checked = -math.inf
+        self.cover_target = None
+        self.last_exchange = -math.inf
+        self.recovering = False
 
     # ---- zone ------------------------------------------------------------
     def zone_goal(self, obs):
@@ -56,25 +63,73 @@ class Brain:
         x, y, z = me["pos"]
         t = obs["t"]
         self.track.update(obs)
+        self.weapons.update(obs)
+        if any(event["type"] in ("hit", "damaged") for event in obs["events"]):
+            self.last_exchange = t
+        ratio = me["hp"] / me["max_hp"]
+        delay = me["stats"].get("regen_delay", self.regen_delay)
+        if ratio <= config.COVER_LOW_HP:
+            self.recovering = True
+        elif ratio >= config.COVER_RECOVER_HP and t - self.last_exchange >= delay:
+            self.recovering = False
         act = {}
 
         if obs["offer"]:
-            act["pick"] = loot.pick_upgrade(obs["offer"])
+            act["pick"] = loot.pick_upgrade(obs["offer"], me)
         take = loot.take_nearby(obs, self.reach)
         if take is not None:
             act["take"] = take
 
         goal, hurry = self.zone_goal(obs)
-        far = math.hypot(goal[0] - x, goal[1] - y) > 2.0
-        mx, my, jump, boost = self.nav.next_step(me["pos"], goal, t, 1.0 if far else 0.0)
-        if not far:
-            mx = my = 0.0
-        act.update(move=[mx, my], boost=boost or (hurry and far), jump=jump)
-        act["aim"] = [self.idle_yaw(mx, my, me), 0.0]
-
         enemies = self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S)
         target = enemies[0] if enemies else None
-        act.update(combat.engage(me, target, self.world, sim_step=self.sim_step))
+        fight = self.weapons.decide(me, target, self.world)
+        hiding = using_cover = False
+
+        if not hurry and target is not None:
+            cover_goal, hiding = self.cover_goal(obs, target)
+            if cover_goal is not None:
+                goal = cover_goal
+                using_cover = True
+        elif (not hurry and self.recovering and self.cover is not None
+              and loot.in_next_zone(obs["zone"], self.cover[0])):
+            goal = self.cover[0]
+            hiding = using_cover = True
+        elif not hurry and not self.recovering and self.track.threat_bearing() is None:
+            opportunity = loot.want(obs, self.world)
+            if opportunity is not None:
+                kind, item = opportunity
+                goal = item["pos"][:2]
+                if kind == "crate":
+                    crate = loot.crate_target(item, self.crates)
+                    muzzle = (x, y, z + me["stats"]["muzzle_height"])
+                    center = (*crate.pos[:2], crate.pos[2] + crate.height / 2)
+                    if self.world.los(muzzle, center):
+                        goal = (x, y)
+                        fight = self.weapons.decide(me, crate, self.world)
+        if hiding:
+            fight["fire"] = [False, False]
+            for weapon in me["weapons"]:
+                if weapon and weapon["kind"] == "gun" and weapon["ammo"] < weapon["stats"]["mag"]:
+                    fight["reload"] = weapon["reload"] <= 0
+
+        reach = config.COVER_REACHED_M if using_cover else 2.0
+        far = math.hypot(goal[0] - x, goal[1] - y) > reach
+        mx, my, jump, boost = self.nav.next_step(me["pos"], goal, t, float(far), precise=using_cover)
+        if not far:
+            mx = my = 0.0
+        if not hurry and not hiding:
+            dodge = self.weapons.dodge(obs, target, self.world)
+            if dodge is not None:
+                dx, dy, urgent = dodge
+                if urgent or not using_cover:
+                    step = self.strafe(obs, dx, dy)
+                    if step is not None:
+                        scale = 1.0 if urgent else config.STRAFE_SPEED_FRACTION
+                        mx, my = step[0] * scale, step[1] * scale
+        act.update(move=[mx, my], boost=boost or (hurry and far), jump=jump)
+        act["aim"] = [self.idle_yaw(mx, my, me), 0.0]
+        act.update(fight)
         if target is not None:
             tx, ty, tz = target.predict(0)
             mf.draw.line([x, y, z + me["stats"]["muzzle_height"]],
@@ -83,6 +138,49 @@ class Brain:
             mf.draw.point([wx, wy, self.world.surface(wx, wy) + 1], "#40c0ff", 2)
         mf.draw.label(f"hp {me['hp']:.0f} | {len(enemies)} seen{' | HURRY' if hurry else ''}")
         return act
+
+    def cover_goal(self, obs, target):
+        me = obs["self"]
+        t = obs["t"]
+        tx, ty, tz = target.predict(0)
+        threat = (tx, ty, tz + target.height / 2)
+        if self.cover_target is None or self.cover_target[0] != target.id:
+            self.cover = None
+            self.cover_checked = -math.inf
+        needs_cover = self.cover is None
+        if self.cover is not None:
+            hide, peek = self.cover
+            needs_cover = (math.dist(threat, self.cover_target[1]) > config.COVER_TARGET_MOVE_M
+                           or not all(loot.in_next_zone(obs["zone"], p) for p in self.cover)
+                           or math.dist(me["pos"][:2], hide) > max(config.COVER_RADII_M))
+        if needs_cover and t - self.cover_checked >= config.COVER_SEARCH_INTERVAL_S:
+            self.cover = self.nav.cover_pair(
+                me["pos"], threat, me["stats"]["muzzle_height"],
+                lambda p: loot.in_next_zone(obs["zone"], p))
+            self.cover_checked = t
+            self.cover_target = (target.id, threat)
+
+        if self.cover is None or any(not loot.in_next_zone(obs["zone"], p) for p in self.cover):
+            return None, False
+        reloading = any(w and w["kind"] == "gun" and (w["reload"] > 0 or w["ammo"] == 0)
+                        for w in me["weapons"])
+        hiding = self.recovering or reloading
+        return self.cover[0 if hiding else 1], hiding
+
+    def strafe(self, obs, dx, dy):
+        me = obs["self"]
+        x, y, z = me["pos"]
+        for sign in (1, -1):
+            px = x + dx * sign * config.DODGE_STEP_M
+            py = y + dy * sign * config.DODGE_STEP_M
+            point = (px, py)
+            if (self.world.in_bounds(px, py) and loot.in_next_zone(obs["zone"], point)
+                    and self.nav.walkable_xy(px, py)
+                    and abs(self.world.surface(px, py) - z) <= config.NAV_MAX_UP
+                    and self.world.los((x, y, z + me["stats"]["muzzle_height"]),
+                                       (px, py, z + me["stats"]["muzzle_height"]))):
+                return sign * dx, sign * dy
+        return None
 
     def idle_yaw(self, mx, my, me):
         """Look toward a recent threat, then travel direction, then sweep."""
