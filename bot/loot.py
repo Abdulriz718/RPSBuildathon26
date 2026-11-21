@@ -25,6 +25,31 @@ def in_next_zone(zone, point):
         0, zone["next_radius"] - config.LOOT_ZONE_MARGIN_M)
 
 
+def supply_goal(obs, tracks):
+    """Closest safe drop, preserving a capture already in progress."""
+    me = obs["self"]
+    zone = obs["zone"]
+    speed = max(1.0, me["stats"]["walk_speed"])
+    best = None
+    for drop in obs["drops"]:
+        point = tuple(drop["pos"][:2])
+        distance = math.dist(point, me["pos"][:2])
+        ours = drop["holder"] == me["id"]
+        if drop["holder"] is not None and not ours:
+            continue
+        if (distance > config.DROP_MAX_M
+                or drop["lands_in"] > distance / speed + config.DROP_EARLY_S
+                or math.dist(point, zone["next_center"]) + config.DROP_ZONE_BUFFER_M > zone["next_radius"]):
+            continue
+        clear = max(config.DROP_CLEAR_M, drop["radius"])
+        if any(math.dist(target.predict(0)[:2], point) <= clear for target in tracks):
+            continue
+        rank = (not ours, distance, drop["id"])
+        if best is None or rank < best[0]:
+            best = (rank, point)
+    return None if best is None else best[1]
+
+
 def want(obs, world):
     """Return an early loot opportunity within the next zone."""
     if obs["t"] >= config.LOOT_WINDOW_S:

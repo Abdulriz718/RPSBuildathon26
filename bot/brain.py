@@ -23,16 +23,6 @@ from track import Target, Tracker
 from world import World
 
 
-def zone_now(z, t):
-    """Current circle (cx, cy, r), interpolating during the shrink window."""
-    if t <= z["shrink_start"] or z["shrink_end"] <= z["shrink_start"]:
-        return z["center"][0], z["center"][1], z["radius"]
-    f = min(1.0, (t - z["shrink_start"]) / (z["shrink_end"] - z["shrink_start"]))
-    cx = z["center"][0] + (z["next_center"][0] - z["center"][0]) * f
-    cy = z["center"][1] + (z["next_center"][1] - z["center"][1]) * f
-    return cx, cy, z["radius"] + (z["next_radius"] - z["radius"]) * f
-
-
 def hdist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
@@ -70,7 +60,6 @@ class Brain:
         self.track = Tracker(cfg)
         self.weapons = combat.Weapons(cfg)
         self.loot = LootMemory()
-        self.my_id = hello.get("slot")
         self.scan_yaw = None
         self.mode = "HOLD"
         self.retreat = None  # (x, y, computed_at, threat_id)
@@ -81,6 +70,7 @@ class Brain:
         self.recovering = False
         self.threat = None  # last mech that hurt us or that we fought
         self.hurt_by = {}  # mech id -> last time it damaged us
+        self.anchor = None  # (circle, refresh time, position)
         # The map and nav grids are big and live all match: move them out of the GC's scans
         # so a collection can't stall a tick.
         gc.collect()
@@ -96,10 +86,13 @@ class Brain:
         dx, dy = x - nx_, y - ny_
         d = math.hypot(dx, dy)
         frac = config.ZONE_MARGIN
-        if config.LATE_ZONE and nr < config.LATE_ZONE_RADIUS:
+        late = config.LATE_ZONE and nr < config.LATE_ZONE_RADIUS
+        if late:
             frac = config.ZONE_MARGIN_LATE
         keep = nr * frac
-        if d <= keep:
+        if late:
+            goal = self.late_anchor(obs, (nx_, ny_), keep)
+        elif d <= keep:
             goal = (x, y)
         else:
             goal = (nx_ + dx / d * keep, ny_ + dy / d * keep)
@@ -107,6 +100,49 @@ class Brain:
         time_left = z["shrink_end"] - t
         hurry = not me["in_zone"] or need > time_left - config.ZONE_SAFETY_S
         return goal, hurry
+
+    def late_anchor(self, obs, center, radius):
+        """Pick a central walkable point, favoring elevation and cover from recent shots."""
+        if radius <= config.LATE_TINY_RADIUS_M:
+            return center
+        key = (*center, radius)
+        now = obs["t"]
+        if self.anchor is not None and self.anchor[0] == key and now < self.anchor[1]:
+            return self.anchor[2]
+        world = self.world
+        me = obs["self"]
+        bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)
+        sound = None
+        if bearing is not None:
+            sound = (math.cos(bearing), math.sin(bearing))
+            source = tuple(p + d * config.LATE_ANCHOR_SOUND_DISTANCE_M
+                           for p, d in zip(me["pos"][:2], sound))
+            source_eye = (*source, world.surface(*source) + me["stats"]["eye_height"])
+        offset = min(radius, config.LATE_ANCHOR_MAX_OFFSET_M)
+        points = [center]
+        for i in range(config.COVER_ANGLES):
+            angle = i * math.tau / config.COVER_ANGLES
+            points.append((center[0] + offset * math.cos(angle), center[1] + offset * math.sin(angle)))
+        best = None
+        center_height = world.ground(*center)
+        for point in points:
+            if not world.in_bounds(*point) or not self.nav.walkable_xy(*point):
+                continue
+            surface = world.surface(*point)
+            if surface - world.ground(*point) > config.NAV_MAX_UP:
+                continue  # walkable roof cells may still need a jet ascent to reach
+            score = (config.LATE_ANCHOR_HEIGHT_WEIGHT * (surface - center_height)
+                     - config.LATE_ANCHOR_CENTER_WEIGHT * hdist(point, center))
+            if sound is not None:
+                score -= config.LATE_ANCHOR_AWAY_WEIGHT * sum(
+                    (p - c) * d for p, c, d in zip(point, center, sound))
+                if not world.los(source_eye, (*point, surface + me["stats"]["eye_height"])):
+                    score += config.LATE_ANCHOR_COVER_BONUS_M
+            if best is None or score > best[0]:
+                best = (score, point)
+        anchor = center if best is None else best[1]
+        self.anchor = (key, now + config.LATE_ANCHOR_REFRESH_S, anchor)
+        return anchor
 
     def in_safe(self, obs, p, frac=1.0):
         z = obs["zone"]
@@ -122,41 +158,28 @@ class Brain:
         close = [m for m in mechs if hdist(m.pos, self.track.me_pos) < near * 1.4 + 10]
         return min(close, key=lambda m: (m.hp if m.hp is not None else 1e9))
 
-    def want_fight(self, mech, t):
-        """Farm mode fights everything. FFA fights only who's shooting us, or a weak lone target."""
-        if config.MODE != "ffa":
-            return True
-        if t - self.hurt_by.get(mech.id, -1e9) < config.FFA_GRUDGE_S:
-            return True
-        visible = self.track.targets_sorted("mech", max_age=0.0)
-        weak = mech.hp is not None and mech.hp < config.FFA_FINISH_HP
-        return weak and len(visible) <= 1 and hdist(mech.pos, self.track.me_pos) < config.FFA_FINISH_M
+    def ffa_target(self, t):
+        """Prefer a recent attacker, otherwise finish a weak isolated report."""
+        enemies = self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S)
+        attacker = next((m for m in enemies if t - self.hurt_by.get(m.id, -math.inf)
+                         < config.FFA_GRUDGE_S), None)
+        if attacker is not None:
+            return attacker
+        if len(enemies) == 1:
+            mech = enemies[0]
+            if (not mech.age and mech.hp is not None and mech.hp < config.FFA_FINISH_HP
+                    and hdist(mech.pos, self.track.me_pos) < config.FFA_FINISH_M):
+                return mech
+        return None
 
     def drop_goal(self, obs):
         """Supply drop worth going for: (x, y) or None."""
         if not config.DROPS:
             return None
-        me = obs["self"]
-        speed = max(1.0, me["stats"].get("walk_speed", 11.7))
-        best = None
-        for d in obs["drops"]:
-            p = d["pos"]
-            dist = hdist(p, me["pos"])
-            if dist > config.DROP_MAX_M:
-                continue
-            if d.get("holder") not in (None, self.my_id):
-                continue
-            if d["lands_in"] > dist / speed + config.DROP_EARLY_S:
-                continue  # too early: no point waiting in the open
-            crowded = any(hdist(m.pos, p) < config.DROP_CLEAR_M
-                          for m in self.track.targets_sorted("mech", max_age=2.0))
-            if crowded:
-                continue
-            if best is None or dist < best[0]:
-                best = (dist, p)
-        return None if best is None else (best[1][0], best[1][1])
+        tracks = self.track.targets_sorted("mech", max_age=config.DROP_TRACK_S)
+        return loot.supply_goal(obs, tracks)
 
-    def loot_goal(self, obs):
+    def loot_goal(self, obs, *, allow_crates=True):
         """(goal_xy, shoot_target or None) for the best loot, or None."""
         me = obs["self"]
         pos = me["pos"]
@@ -164,6 +187,8 @@ class Brain:
         slot_free = None in me["weapons"]
         best = None
         for iid, (typ, kind, p, hp) in self.loot.items.items():
+            if typ == "crate" and not allow_crates:
+                continue
             d = hdist(p, pos)
             if d > config.LOOT_RADIUS or not self.in_safe(obs, p, config.LOOT_ZONE_FRAC):
                 continue
@@ -223,8 +248,8 @@ class Brain:
         me = obs["self"]
         if self.retreat and t - self.retreat[2] < config.COVER_CACHE_S and self.retreat[3] == threat.id:
             return self.retreat[:2]
-        cz = zone_now(obs["zone"], t)
-        c = self.nav.cover_from(me["pos"], threat.pos, (cz[0], cz[1], cz[2] * 0.95))
+        zone = obs["zone"]
+        c = self.nav.cover_from(me["pos"], threat.pos, (*zone["center"], zone["radius"] * 0.95))
         if c is None:
             x, y = me["pos"][0], me["pos"][1]
             dx, dy = x - threat.pos[0], y - threat.pos[1]
@@ -287,19 +312,23 @@ class Brain:
 
         zgoal, hurry = self.zone_goal(obs)
         mech = self.pick_mech()
+        ffa = config.MODE == "ffa"
+        target = self.ffa_target(t) if ffa else mech
         if mech is not None:
-            self.threat = mech
+            self.threat = target if target is not None else mech
         threat = self.threat if self.threat and t - self.threat.last_seen < 6.0 else None
         visible_mech = mech is not None and mech.age == 0
         dgoal = None if (visible_mech and not self.recovering) or hurry else self.drop_goal(obs)
 
-        target = mech
         goal = zgoal
         stand = hide = False
         move = None  # direct move override (strafe)
-        precise = False
+        tiny_zone = config.LATE_ZONE and obs["zone"]["next_radius"] <= config.LATE_TINY_RADIUS_M
+        precise = tiny_zone
 
-        if hurry and not self.in_safe(obs, (x, y), 0.98):
+        center_needed = tiny_zone and hdist(zgoal, (x, y)) > config.LATE_TINY_REACH_M
+        if (not me["in_zone"] or center_needed
+                or (hurry and not self.in_safe(obs, (x, y), 0.98))):
             mode = "ZONE"
         elif dgoal is not None:
             mode, goal, precise = "DROP", dgoal, True
@@ -309,16 +338,16 @@ class Brain:
             goal = self.retreat_goal(obs, threat, t)
             stand = self.hidden_from(me, threat)
             hide = True
-        elif mech is not None and self.want_fight(mech, t):
+        elif target is not None:
             mode = "FIGHT"
-            pair = self.fight_spot(obs, mech, t)
+            pair = self.fight_spot(obs, target, t)
             reloading = any(w and w["kind"] == "gun" and (w["reload"] > 0 or w["ammo"] == 0)
                             for w in me["weapons"])
             if pair is not None:
                 goal, precise = (pair[0] if reloading else pair[1]), True
                 hide = reloading
             else:
-                move = self.strafe(me, mech, t)
+                move = self.strafe(me, target, t)
         elif mech is not None:
             mode = "AVOID"
             goal = self.retreat_goal(obs, mech, t)
@@ -326,9 +355,10 @@ class Brain:
             target = None
         else:
             mode = "HOLD"
-            if t < config.LOOT_UNTIL_S and not late and t - self.last_exchange > 3.0:
-                npc = self.pick_npc(me)
-                lg = self.loot_goal(obs)
+            if (t < config.LOOT_UNTIL_S and not late and not self.recovering
+                    and t - self.last_exchange > 3.0):
+                npc = None if ffa else self.pick_npc(me)
+                lg = self.loot_goal(obs, allow_crates=not ffa)
                 if npc is not None:
                     mode, target, stand = "LOOT", npc, True
                 elif lg is not None:
@@ -343,16 +373,18 @@ class Brain:
             mx, my, jump, boost = move[0], move[1], False, False
         else:
             reach = config.COVER_REACHED_M if precise else 2.0
+            if tiny_zone and mode in ("ZONE", "HOLD"):
+                reach = config.LATE_TINY_REACH_M
             far = hdist(goal, (x, y)) > reach and not stand
             mx, my, jump, boost = self.nav.next_step(me["pos"], goal, t, 1.0 if far else 0.0, precise=precise)
             if not far:
                 mx = my = 0.0
             boost = boost or (mode == "ZONE" and far) or (mode in ("RECOVER", "AVOID") and far and me["energy"] > 30)
-        if mode in ("FIGHT", "DROP", "HOLD", "LOOT") and not hide:
-            dodge = self.weapons.dodge(obs, mech, self.world)
+        if mode in ("FIGHT", "DROP", "HOLD", "LOOT") or (mode != "ZONE" and (ffa or late)):
+            dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge
-                if urgent or move is not None:
+                if urgent or (move is not None and not hide):
                     step = self.dodge_step(obs, dx, dy)
                     if step is not None:
                         s = 1.0 if urgent else config.STRAFE_SPEED_FRACTION
@@ -364,7 +396,7 @@ class Brain:
         if target is None and threat is not None and mode in ("RECOVER", "AVOID"):
             act["aim"] = [math.atan2(threat.pos[1] - y, threat.pos[0] - x), 0.0]  # never show our back
         fight = self.weapons.decide(me, target, self.world)
-        if hide:
+        if hide or (ffa and target is None):
             fight["fire"] = [False, False]
             gun = next((w for w in me["weapons"] if w and w["kind"] == "gun"), None)
             if gun and gun["reload"] <= 0 and gun["ammo"] < gun["stats"]["mag"]:

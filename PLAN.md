@@ -79,6 +79,11 @@ CLAUDE.md          # same pointer for Claude Code
 - Endgame: when ranked by HP at 8:00 or zone ticks matter, avoid all damage, keep HP high.
 - **FFA mode** (`config.MODE = "ffa"`): fight only when attacked or a target is low HP and alone; otherwise hide and let others thin each other. We can't test FFA on the practice server, so keep it a config switch and decide at the cutoff which submission to lock (best practice score is the default; pick the FFA-tuned one only if its practice score is close and safely inside top 32).
 
+The default remains `MODE = "farm"`. The late-zone anchor samples walkable ground inside
+the next circle and scores elevation and cover from recent shots. Safe drop selection
+checks recent mech tracks and the next circle. FFA can retaliate during zone movement
+and avoids initiating fights with NPCs. The practice score for these changes is pending.
+
 ### Phase 4: hardening (last 2–3 h, no new features)
 - Run `bench.py` worst case; make sure p99 < 25 ms.
 - Rebuild from a clean clone with the exact sandbox flags.
