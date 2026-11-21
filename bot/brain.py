@@ -18,6 +18,7 @@ import math
 
 import combat
 import config
+import defense
 import loot
 import mechfight as mf
 from nav import Nav
@@ -354,6 +355,17 @@ class Brain:
         threat = self.threat if self.threat and t - self.threat.last_seen < 6.0 else None
         visible_mech = mech is not None and mech.age == 0
         dgoal = None if (visible_mech and not self.recovering) or hurry else self.drop_goal(obs)
+        defensive_tracks = (self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S)
+                            if config.DEFENSIVE_EVASION else [])
+        close_enemies = [enemy for enemy in defensive_tracks if not enemy.age
+                         and hdist(enemy.pos, me["pos"]) <= config.EVADE_MULTI_RANGE_M]
+        pressured = len(close_enemies) > 1
+        if pressured:
+            # Face the most recent attacker. The order is nearest-first for ties.
+            threat = max(close_enemies, key=lambda enemy: self.hurt_by.get(enemy.id, -math.inf))
+            self.threat = threat
+            if not ffa:
+                target = threat
 
         wgoal = None if hurry or self.recovering else self.weapon_goal(obs, mech)
         goal = zgoal
@@ -374,6 +386,10 @@ class Brain:
             goal = self.retreat_goal(obs, threat, t)
             stand = self.hidden_from(me, threat)
             hide = True
+        elif pressured and threat is not None:
+            mode = "AVOID"
+            goal = self.retreat_goal(obs, threat, t)
+            stand = all(self.hidden_from(me, enemy) for enemy in close_enemies)
         elif wgoal is not None:
             mode, goal = "WEAPON", (wgoal[1][0], wgoal[1][1])
             if hdist(wgoal[1], (x, y)) <= self.reach - 0.5 and abs(wgoal[1][2] - z) <= 4:
@@ -422,7 +438,13 @@ class Brain:
             if not far:
                 mx = my = 0.0
             boost = boost or (mode == "ZONE" and far) or (mode in ("RECOVER", "AVOID") and far and me["energy"] > 30)
-        if mode in ("FIGHT", "DROP", "HOLD", "LOOT") or (mode != "ZONE" and (ffa or late)):
+        bearing = None
+        if config.DEFENSIVE_EVASION:
+            bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)
+        if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
+            mx, my = defense.escape_move(
+                obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
+        elif mode in ("FIGHT", "DROP", "HOLD", "LOOT") or (mode != "ZONE" and (ffa or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge
@@ -437,6 +459,10 @@ class Brain:
         act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and me["weapons"][1] is None), 0.0]
         if target is None and threat is not None and mode in ("RECOVER", "AVOID"):
             act["aim"] = [math.atan2(threat.pos[1] - y, threat.pos[0] - x), 0.0]  # never show our back
+        elif (config.DEFENSIVE_EVASION and mode == "HOLD" and target is None
+              and threat is None and bearing is None and (mx or my)):
+            phase = int(t / config.EVADE_SCAN_PERIOD_S) % 2
+            act["aim"] = [math.atan2(my, mx) + math.radians(config.EVADE_SCAN_ANGLE_DEG) * (1 - 2 * phase), 0.0]
         fight = self.weapons.decide(me, target, self.world)
         if hide or (ffa and target is None):
             fight["fire"] = [False, False]

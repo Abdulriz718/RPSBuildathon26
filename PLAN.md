@@ -234,3 +234,17 @@ clearly better in the harness's FFA scenes.
 - Then: two-hunter fights (0% wins, 15% of damage from behind): keep both in front, back toward cover so they
   can't flank. [A]
 - Sim fidelity work [B]: hunters that pick up weapons and use the laser, so "both have lasers" is the normal case.
+
+### Defensive movement experiment
+
+The browser recording shows the risk of staying exposed on approach. For scored bots, gun rounds travel
+straight and mortar shells fall under gravity. The torso slews before it reaches commanded aim.
+`DEFENSIVE_EVASION` is off by default for an isolated comparison with the reported 2.31 build.
+When enabled, two nearby opponents can trigger a withdrawal. During withdrawal the bot compares
+short movement paths for projectile contact, cover, enemy aim, recent shot bearings, and zone safety.
+Between contacts it scans either side of its travel direction. Evaluate it against matched two-hunter
+seeds before spending a practice submission.
+
+First comparison (10 matched hard two-hunter seeds): both variants won 3/10. Hunter hit
+rate fell from 48% to 42%, while rear hits rose from 19% to 24% of damage taken. Leave the
+flag off pending a clearer win and better flank coverage.
