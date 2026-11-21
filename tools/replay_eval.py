@@ -8,6 +8,7 @@ import json
 from math import dist, sqrt
 from pathlib import Path
 from statistics import mean
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 KIT = ROOT / "mechfight-kit" / "mechfight-kit"
@@ -33,23 +34,24 @@ def load_stream(path, map_dir=None):
 
 
 def tracking_errors(hello, observations, horizons):
+    sys.path.insert(0, str(ROOT / "bot"))
+    from track import Tracker
+
+    tracker = Tracker(hello["config"])
     tick_hz = hello["config"]["match"]["tick_hz"]
     by_tick = {obs["tick"]: {actor["id"]: actor["pos"] for actor in obs["mechs"]}
                for obs in observations}
     errors = defaultdict(list)
     for obs in observations:
-        for actor in obs["mechs"]:
-            if actor["kind"] != "mech" or "vel" not in actor:
-                continue
-            position = actor["pos"]
+        tracker.update(obs)
+        for target in tracker.targets_sorted(max_age=0):
             for horizon in horizons:
                 ticks = round(horizon * tick_hz)
-                truth = by_tick.get(obs["tick"] + ticks, {}).get(actor["id"])
+                truth = by_tick.get(obs["tick"] + ticks, {}).get(target.id)
                 if truth is None:
                     continue
-                dt = ticks / tick_hz
-                forecast = tuple(p + v * dt for p, v in zip(position, actor["vel"]))
-                errors[horizon].append((dist(position, truth), dist(forecast, truth)))
+                errors[horizon].append((dist(target.pos, truth),
+                                        dist(target.predict(ticks / tick_hz), truth)))
     return errors
 
 
@@ -65,12 +67,12 @@ def main():
     horizons = sorted({round(h * tick_hz) / tick_hz for h in args.horizons if round(h * tick_hz)})
     errors = tracking_errors(hello, observations, horizons)
     print(f"{len(observations)} observations. Error is 3D position RMSE in meters.")
-    print("horizon   samples    stationary    reported velocity")
+    print("horizon   samples    stationary        tracker")
     for horizon in horizons:
         samples = errors[horizon]
         if samples:
             metrics = [sqrt(mean(e * e for e in column)) for column in zip(*samples)]
-            print(f"{horizon:6.2f}s {len(samples):8d} {metrics[0]:13.3f} {metrics[1]:20.3f}")
+            print(f"{horizon:6.2f}s {len(samples):8d} {metrics[0]:13.3f} {metrics[1]:14.3f}")
         else:
             print(f"{horizon:6.2f}s {0:8d}")
     return 0 if any(errors.values()) else 1
