@@ -403,14 +403,52 @@ class Brain:
                 fight["reload"] = True
         act.update(fight)
 
-        # debug
+        self.draw_debug(obs, act, mode, target, goal, hide)
+        return act
+
+    def draw_debug(self, obs, act, mode, target, goal, hide):
+        """What the viewer's bot-debug overlay (B) shows: why we're doing what we do.
+        Kept to ~10 items a tick so a full match stays far under the 8 MB debug cap."""
+        me = obs["self"]
+        x, y, z = me["pos"]
+        mh = me["stats"]["muzzle_height"]
+        muzzle = [x, y, z + mh]
+        # where the torso actually points (yellow) vs where we want it (white)
+        for (yaw, pitch), color, length in ((me["aim"], "#ffd040", 40), (act["aim"], "#ffffff", 25)):
+            c = math.cos(pitch)
+            mf.draw.line(muzzle, [x + c * math.cos(yaw) * length, y + c * math.sin(yaw) * length,
+                                  z + mh + math.sin(pitch) * length], color)
         if target is not None:
             tx, ty, tz = target.predict(0)
-            mf.draw.line([x, y, z + me["stats"]["muzzle_height"]], [tx, ty, tz + target.height / 2], "#ff5040")
-        if mode in ("RECOVER", "AVOID", "FIGHT", "DROP"):
+            mf.draw.line(muzzle, [tx, ty, tz + target.height / 2], "#ff5040")
+        # legs: goal and the next few path waypoints
+        prev = [x, y, z + 1]
+        for wx, wy in self.nav.path[:4]:
+            p = [wx, wy, self.world.surface(wx, wy) + 1]
+            mf.draw.line(prev, p, "#40c0ff")
+            prev = p
+        if mode != "HOLD" or hdist(goal, (x, y)) > 2:
             mf.draw.point([goal[0], goal[1], self.world.surface(goal[0], goal[1]) + 1], "#40ff80", 8)
-        mf.draw.label(f"{mode} hp {me['hp']:.0f}")
-        return act
+
+        weapons = []
+        for w in me["weapons"]:
+            if not w:
+                continue
+            if w["kind"] == "gun":
+                weapons.append(f"gun {w['ammo']}/{w['stats']['mag']}" + (" R" if w["reload"] > 0 else ""))
+            elif w.get("charge"):
+                weapons.append(f"{w['kind']} {w['charge']:.2f}s")
+            else:
+                weapons.append(w["kind"] + (" cd" if w["cooldown"] > 0 else ""))
+        fire = act.get("fire", [False, False])
+        tgt = "-"
+        if target is not None:
+            tgt = f"{target.kind[0]}{target.id} {hdist(target.pos, (x, y)):.0f}m"
+            if target.hp is not None:
+                tgt += f" {target.hp:.0f}hp"
+        mf.draw.label(f"{mode} {tgt} | {me['hp']:.0f}/{me['max_hp']:.0f} c{me['cubes']}")
+        mf.draw.text(" ".join(weapons) + f" | fire {'G' if fire[0] else '-'}{'2' if len(fire) > 1 and fire[1] else '-'}"
+                     + (" HIDE" if hide else "") + (" REC" if self.recovering else ""))
 
     def dodge_step(self, obs, dx, dy):
         """Pick the side of (dx, dy) that's walkable, open and in the zone."""
