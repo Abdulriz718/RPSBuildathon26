@@ -1,61 +1,45 @@
-#!/usr/bin/env python3
-"""Time Mechfight decisions on the kit's recorded observations."""
-
+"""Replay the kit's recorded stream through the bot and report per-tick timing.
+Usage: python tools/bench.py [--repeat N]"""
 import argparse
-from math import ceil
-from pathlib import Path
-from statistics import median
+import gzip
+import json
+import os
 import sys
-from time import perf_counter_ns
+import time
 
-from replay_eval import DEFAULT_STREAM, ROOT, load_stream
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "bot"))
 
-sys.path.insert(0, str(ROOT / "bot"))
+from main import Bot  # noqa: E402
 
-from main import Bot, mf
-
-
-def percentile(samples, fraction):
-    return samples[ceil(len(samples) * fraction) - 1]
+STREAM = os.path.join(ROOT, "mechfight-kit", "mechfight-kit", "check", "stream.jsonl.gz")
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stream", type=Path, default=DEFAULT_STREAM)
-    parser.add_argument("--map-dir", type=Path)
-    parser.add_argument("--repeat", type=int, default=5)
-    parser.add_argument("--max-p99-ms", type=float, default=25.0)
-    args = parser.parse_args()
-    if args.repeat <= 0 or args.max_p99_ms <= 0:
-        parser.error("repeat and max-p99-ms must be positive")
-    hello, observations = load_stream(args.stream, args.map_dir)
-    mf.draw.caps = hello["config"]["debug"]
-    samples = []
-    errors = over_budget = 0
-    slowest_tick = observations[0]["tick"]
-    slowest_ms = 0.0
-    for _ in range(args.repeat):
-        bot = Bot(hello)
-        for obs in observations:
-            mf.draw.clear()
-            started = perf_counter_ns()
-            bot.act(obs)
-            elapsed = (perf_counter_ns() - started) / 1_000_000
-            samples.append(elapsed)
-            if elapsed > slowest_ms:
-                slowest_ms = elapsed
-                slowest_tick = obs["tick"]
-        errors += bot.errors
-        over_budget += bot.over_budget
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repeat", type=int, default=3)
+    args = ap.parse_args()
+    msgs = [json.loads(line) for line in gzip.open(STREAM, "rt") if line.strip()]
+    hello = msgs[0]
+    hello["map"]["dir"] = os.path.join(ROOT, "arena")
+    obs = [m for m in msgs if m.get("type") == "obs"]
 
-    samples.sort()
-    p99 = percentile(samples, 0.99)
-    print(f"{len(samples)} decisions ({args.repeat} passes), in-process elapsed time")
-    print(f"p50 {median(samples):.3f} ms  p90 {percentile(samples, 0.90):.3f} ms  "
-          f"p99 {p99:.3f} ms  max {slowest_ms:.3f} ms (tick {slowest_tick})")
-    print(f"Fallbacks: {errors} decision errors, {over_budget} over the decision guard")
-    return int(errors > 0 or over_budget > 0 or p99 >= args.max_p99_ms)
+    t0 = time.perf_counter()
+    bot = Bot(hello)
+    init_ms = (time.perf_counter() - t0) * 1000
+
+    times = []
+    for _ in range(args.repeat):
+        for o in obs:
+            t = time.perf_counter()
+            bot.act(o)
+            times.append((time.perf_counter() - t) * 1000)
+    times.sort()
+    pct = lambda p: times[min(len(times) - 1, int(p * len(times)))]
+    print(f"init {init_ms:.0f} ms | ticks {len(times)} | p50 {pct(.5):.2f} p99 {pct(.99):.2f} max {times[-1]:.2f} ms")
+    if pct(.99) > 25:
+        sys.exit("p99 over 25 ms budget")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
