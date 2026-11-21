@@ -98,3 +98,9 @@ class Tracker:
             if self.now - at < config.TRACK_SOUND_LOOK_S:
                 return bearing
         return None
+
+    def recent_shot_bearing(self, max_age: float) -> float | None:
+        if self.last_nearby_shot is None:
+            return None
+        at, bearing = self.last_nearby_shot
+        return bearing if 0 <= self.now - at <= max_age else None
