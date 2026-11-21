@@ -248,3 +248,22 @@ seeds before spending a practice submission.
 First comparison (10 matched hard two-hunter seeds): both variants won 3/10. Hunter hit
 rate fell from 48% to 42%, while rear hits rose from 19% to 24% of damage taken. Leave the
 flag off pending a clearer win and better flank coverage.
+
+Follow-up (100 matched duels per cell, A's run): off/on = hard x1 81/78, expert x1 65/61, medium x2 37/36,
+hard x2 29/29. The withdrawal triggers only 3-4% of the time. No gain: keep the flag off.
+
+Adversarial review of `bot/defense.py` (A's run, with the flag forced on): no crash, no timing risk (2-5 ms/tick
+worst seen). Fix before turning it on [B]:
+1. `defense.py:99-103,126`: outside the next circle, every lane fails the zone check and it returns the original
+   move, even straight into a shot. Score all lanes with a zone penalty instead of rejecting them.
+2. `defense.py:73,94`: with `move (0,0)` (hidden in RECOVER) and any nearby shot, it returns a full-speed run east,
+   out of cover. Add a "stay" candidate; use 8 compass headings when standing.
+3. `defense.py:122-123`: with no shots/threats but a sound bearing equal to the path direction, it turns 105 deg
+   off the nav path every tick, so RECOVER may never reach its retreat point. Skip the sound term then.
+4. `brain.py` `pressured` needs `age == 0`: hiding drops sight, mode flips back to FIGHT, it peeks, sees both,
+   AVOIDs again. Hold `pressured` for ~1 s.
+5. `defense.py:26-37`: blocked projectiles don't count toward `EVADE_MAX_PROJECTILES`; cap the ones examined.
+
+Two-hunter fights (A): kiting and target-choice changes showed no gain in the sim (see EXPERIMENTS.md); the lever
+is getting a laser (58% vs 6% wins with two hunters). Next for A: roof climbing, since a quarter of floor weapons
+are on roofs.

@@ -59,8 +59,8 @@ With 40 floor weapons (a quarter on roofs) and hunters that loot them and use mo
 Expert, 200 duels, win % by what we held at the end: gun+laser 91, gun+mortar 50, gun+lightning 48, gun only 36.
 Variants (fetch range 250 m, swap range 90 m, bigger laser bonus, ignore fights under 40 m) all 65-66%: defaults kept.
 
-| 6 | | | `COVER_LOW_HP=0`, `GUN_AIM_FRACTION=1.3`, `ENDGAME_LOW_HP=0` (sim: hard 0% -> 82%) | | |
-| 7 | | | #6 + WEAPON mode: fetch best seen floor weapon (laser > lightning > mortar), sweep torso while unarmed, swap up to laser within 45 m (sim expert: 48% -> 65%) | | |
+| 6 | | | `COVER_LOW_HP=0`, `GUN_AIM_FRACTION=1.3`, `ENDGAME_LOW_HP=0` (sim: hard 0% -> 82%) | 2.31 (per PLAN.md note) | yes |
+| 7 | | | #6 + WEAPON mode: fetch best seen floor weapon (laser > lightning > mortar), sweep torso while unarmed, swap up to laser within 45 m (sim expert: 48% -> 65%) | 3.23 | yes: current best (main @ 1079658 behaviour) |
 
 ## Sample replay (play.joinbuilders.org/replays/mechanics-v2-16.jsonl.gz): 16 house bots, FFA
 
@@ -76,3 +76,32 @@ Variants (fetch range 250 m, swap range 90 m, bigger laser bonus, ignore fights 
 
 | match | t | killed by / weapon | what our bot was doing (mode, label) | fix idea |
 |-------|---|--------------------|--------------------------------------|----------|
+
+## Defensive evasion (Codex, `DEFENSIVE_EVASION`, off by default) — sim A/B, 100 duels each
+
+| setup | off | on |
+|---|---|---|
+| hard x1 | 81% | 78% |
+| expert x1 | 65% | 61% |
+| medium x2 | 37% | 36% (AVOID 4% of time) |
+| hard x2 | 29% | 29% (AVOID 3% of time) |
+
+No measurable gain; leave off. Same session, no gain either (expert x1 / hard x2, 100 each):
+`GUN_AIM_FRACTION` 1.7 (62/28) or 2.2 (67/29), `COVER_RADII_M=()` (64/31), `KEEP_OFF_LIGHTNING_M=0` (62/30).
+Config tuning has plateaued in the sim: next gains need new behaviour (two-hunter play, roofs, cubes).
+
+## Two-hunter fights (sim, hard x2 unless noted, 100-120 duels each)
+
+Diagnostics (`duel.py` now prints them for 2+ hunters): hunters >90 deg apart 33-34% of the time, both in our
+view only 21-22%, target switches 0.8/duel, first kill median 15 s. Win % by end loadout: gun+laser 58,
+gun+lightning 31, gun+mortar 7, gun only 6.
+
+| tried | hard x2 | medium x2 | kept? |
+|---|---|---|---|
+| baseline | 28-29% | 34-37% | - |
+| kite away from both attackers when spread > 70 deg (visible tracks only) | 30% (ran 2% of the time) | - | no |
+| + unseen attackers from `damaged` bearings and gunshot sounds | 28% (ran 7%), rear damage 15% unchanged | - | no |
+| shoot nearest instead of weakest | 28% | 33% | no |
+
+Conclusion: in the sim, 1-vs-2 is a damage race. Positioning and target choice don't move it; holding a laser does
+(58% vs 6%). Code for the tries above was removed; only the diagnostics stay.
