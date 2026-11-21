@@ -198,7 +198,7 @@ class Nav:
         self.search = None
 
     # ---- per tick --------------------------------------------------------
-    def next_step(self, pos, goal, t=0.0, speed=0.0):
+    def next_step(self, pos, goal, t=0.0, speed=0.0, *, precise=False):
         """Returns (move_x, move_y, jump, boost) toward goal."""
         x, y = pos[0], pos[1]
         if not self.ok:
@@ -214,10 +214,12 @@ class Nav:
         if t < self.unstick_until:
             return self.unstick_dir[0], self.unstick_dir[1], True, True
 
-        replan = (
-            self.goal is None or math.dist(goal, self.goal) > config.NAV_REPLAN_GOAL_MOVE
-            or t - self.last_plan_t > config.NAV_REPLAN_S or not self.path
-        )
+        tolerance = config.COVER_REACHED_M if precise else config.NAV_REPLAN_GOAL_MOVE
+        goal_changed = self.goal is None or math.dist(goal, self.goal) > tolerance
+        if precise and goal_changed:
+            self.search = None
+            self.path = []
+        replan = goal_changed or t - self.last_plan_t > config.NAV_REPLAN_S or not self.path
         if replan and self.search is None:
             self.goal = (goal[0], goal[1])
             self._start_search(pos, goal)
@@ -259,6 +261,34 @@ class Nav:
             return True
         return False
 
+    def cover_pair(self, pos, threat_pos, height, allowed):
+        """Find covered ground with a nearby walkable firing position."""
+        x, y, z = pos
+        threat_x, threat_y, _ = threat_pos
+        away = math.atan2(y - threat_y, x - threat_x)
+        angles = tuple(away + i * math.pi / 4 for i in (0, 1, -1, 2, -2, 3, -3, 4))
+        world = self.world
+
+        def muzzle(px, py):
+            return px, py, world.surface(px, py) + height
+
+        def valid(point):
+            px, py = point
+            return (world.in_bounds(px, py) and allowed(point) and self.walkable_xy(px, py)
+                    and abs(world.surface(px, py) - z) <= config.NAV_MAX_UP)
+
+        for radius in (0, *config.COVER_RADII_M):
+            for angle in angles if radius else (away,):
+                hide = (x + radius * math.cos(angle), y + radius * math.sin(angle))
+                if not valid(hide) or world.los(muzzle(*hide), threat_pos):
+                    continue
+                for peek_angle in angles:
+                    step = config.DODGE_STEP_M
+                    peek = (hide[0] + step * math.cos(peek_angle),
+                            hide[1] + step * math.sin(peek_angle))
+                    if (valid(peek) and world.los(muzzle(*peek), threat_pos)
+                            and world.los(muzzle(*hide), muzzle(*peek))):
+                        return hide, peek
     def cover_from(self, pos, threat_pos, zone=None):
         """Nearest walkable ground point the threat can't see (eye to our chest and head), or None.
         zone: optional (cx, cy, r) the point must stay inside."""
@@ -291,3 +321,7 @@ class Nav:
             if best:
                 return best[1], best[2]
         return None
+
+    def cover_from(self, pos, threat_pos):
+        pair = self.cover_pair(pos, threat_pos, 7.0, lambda point: True)
+        return pair[0] if pair is not None else None
