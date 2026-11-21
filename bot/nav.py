@@ -262,7 +262,9 @@ class Nav:
         return False
 
     def cover_pair(self, pos, threat_pos, height, allowed):
-        """Find covered ground with a nearby walkable firing position."""
+        """Find covered ground with a nearby walkable firing position.
+        Gives up (None) after COVER_PAIR_BUDGET_MS so a tick never runs long on open ground."""
+        deadline = time.perf_counter() + config.COVER_PAIR_BUDGET_MS / 1000.0
         x, y, z = pos
         threat_x, threat_y, _ = threat_pos
         away = math.atan2(y - threat_y, x - threat_x)
@@ -279,6 +281,8 @@ class Nav:
 
         for radius in (0, *config.COVER_RADII_M):
             for angle in angles if radius else (away,):
+                if time.perf_counter() > deadline:
+                    return None
                 hide = (x + radius * math.cos(angle), y + radius * math.sin(angle))
                 if not valid(hide) or world.los(muzzle(*hide), threat_pos):
                     continue
@@ -289,6 +293,8 @@ class Nav:
                     if (valid(peek) and world.los(muzzle(*peek), threat_pos)
                             and world.los(muzzle(*hide), muzzle(*peek))):
                         return hide, peek
+        return None
+
     def cover_from(self, pos, threat_pos, zone=None):
         """Nearest walkable ground point the threat can't see (eye to our chest and head), or None.
         zone: optional (cx, cy, r) the point must stay inside."""
@@ -321,7 +327,3 @@ class Nav:
             if best:
                 return best[1], best[2]
         return None
-
-    def cover_from(self, pos, threat_pos):
-        pair = self.cover_pair(pos, threat_pos, 7.0, lambda point: True)
-        return pair[0] if pair is not None else None
