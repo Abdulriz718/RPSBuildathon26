@@ -32,9 +32,17 @@ class World:
 
     # ---- point queries -------------------------------------------------
     def cell(self, x: float, y: float):
-        i = int(round((x - self.min_x) / self.step))
-        j = int(round((y - self.min_y) / self.step))
-        return min(max(i, 0), self.nx - 1), min(max(j, 0), self.ny - 1)
+        i = int((x - self.min_x) / self.step + 0.5)
+        j = int((y - self.min_y) / self.step + 0.5)
+        if i < 0:
+            i = 0
+        elif i >= self.nx:
+            i = self.nx - 1
+        if j < 0:
+            j = 0
+        elif j >= self.ny:
+            j = self.ny - 1
+        return i, j
 
     def ground(self, x: float, y: float) -> float:
         """Terrain height at (x, y), bilinear. Ignores buildings."""
@@ -51,7 +59,7 @@ class World:
     def surface(self, x: float, y: float) -> float:
         """Highest grounded surface at (x, y): roof top or terrain."""
         i, j = self.cell(x, y)
-        return float(self.solid[j, i])
+        return self.solid.item(j, i)
 
     def in_bounds(self, x: float, y: float) -> bool:
         return self.min_x <= x <= self.max_x and self.min_y <= y <= self.max_y
