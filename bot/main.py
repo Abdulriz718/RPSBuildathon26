@@ -1,13 +1,15 @@
-"""Entry point. Wraps Brain with a time guard; the kit wrapper already catches exceptions."""
-import os
+"""Mechfight entry point and the guard around each bot decision."""
+
+from pathlib import Path
 import sys
-import time
+from time import perf_counter
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import config  # noqa: E402
-import mechfight as mf  # noqa: E402
-from brain import Brain  # noqa: E402
+import config
+import mechfight as mf
+from brain import Brain
 
 
 class Bot:
@@ -15,19 +17,32 @@ class Bot:
 
     def __init__(self, hello):
         self.brain = Brain(hello)
-        self.last = {}
-        self.slow = 0
+        tick_budget_ms = hello["config"]["bot"]["tick_budget_ms"]
+        self.budget_s = min(config.TICK_SOFT_LIMIT_MS, tick_budget_ms) / 1000
+        self.last_safe = {}
+        self.errors = 0
+        self.over_budget = 0
 
     def act(self, obs):
-        t0 = time.perf_counter()
-        action = self.brain.decide(obs)
-        ms = (time.perf_counter() - t0) * 1000
-        if ms > config.TICK_SOFT_LIMIT_MS:
-            self.slow += 1
-            if self.slow <= 5 or self.slow % 100 == 0:
-                mf.log(f"slow tick {obs['tick']}: {ms:.1f} ms ({self.slow} so far)")
-        self.last = {k: action[k] for k in ("move", "aim", "boost") if k in action}
-        return action
+        started = perf_counter()
+        try:
+            action = dict(self.brain.decide(obs))
+            action["tick"] = obs["tick"]
+            continuous = {key: tuple(action[key]) for key in ("move", "aim") if key in action}
+            if "boost" in action:
+                continuous["boost"] = action["boost"]
+        except Exception as error:
+            self.errors += 1
+            if self.errors <= 3:
+                mf.log(f"Decision failed at tick {obs['tick']}: {error!r}")
+        else:
+            if perf_counter() - started < self.budget_s:
+                self.last_safe = continuous
+                return action
+            self.over_budget += 1
+
+        mf.draw.clear()
+        return {"tick": obs["tick"], **self.last_safe}
 
 
 if __name__ == "__main__":

@@ -26,9 +26,8 @@ class Brain:
         self.reach = cfg["loot"]["pickup_radius"]
         self.world = World.load(hello["map"]["dir"])
         self.nav = Nav(self.world, cfg.get("mech", {}))
-        self.track = Tracker()
-        self.hurt_bearing = None
-        self.hurt_t = -1e9
+        self.track = Tracker(cfg)
+        self.sim_step = 1 / cfg["match"]["tick_hz"]
         self.scan_yaw = None
 
     # ---- zone ------------------------------------------------------------
@@ -59,10 +58,6 @@ class Brain:
         self.track.update(obs)
         act = {}
 
-        for e in obs["events"]:
-            if e["type"] == "damaged" and e.get("bearing") is not None:
-                self.hurt_bearing, self.hurt_t = e["bearing"], t
-
         if obs["offer"]:
             act["pick"] = loot.pick_upgrade(obs["offer"])
         take = loot.take_nearby(obs, self.reach)
@@ -75,22 +70,25 @@ class Brain:
         if not far:
             mx = my = 0.0
         act.update(move=[mx, my], boost=boost or (hurry and far), jump=jump)
-        act["aim"] = [self.idle_yaw(t, mx, my, me), 0.0]
+        act["aim"] = [self.idle_yaw(mx, my, me), 0.0]
 
-        enemies = self.track.targets_sorted("mech")
-        if enemies:
-            act.update(combat.engage(me, enemies[0], self.world))
-            tp = enemies[0].pos
-            mf.draw.line([x, y, z + 7], [tp[0], tp[1], tp[2] + 4.5], "#ff5040")
+        enemies = self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S)
+        target = enemies[0] if enemies else None
+        act.update(combat.engage(me, target, self.world, sim_step=self.sim_step))
+        if target is not None:
+            tx, ty, tz = target.predict(0)
+            mf.draw.line([x, y, z + me["stats"]["muzzle_height"]],
+                         [tx, ty, tz + target.height / 2], "#ff5040")
         for wx, wy in self.nav.path[:20]:
             mf.draw.point([wx, wy, self.world.surface(wx, wy) + 1], "#40c0ff", 2)
         mf.draw.label(f"hp {me['hp']:.0f} | {len(enemies)} seen{' | HURRY' if hurry else ''}")
         return act
 
-    def idle_yaw(self, t, mx, my, me):
-        """Aim when nobody is in sight: toward whoever hit us last, else where we walk, else sweep."""
-        if t - self.hurt_t < config.HURT_LOOK_S:
-            return self.hurt_bearing
+    def idle_yaw(self, mx, my, me):
+        """Look toward a recent threat, then travel direction, then sweep."""
+        bearing = self.track.threat_bearing()
+        if bearing is not None:
+            return bearing
         if mx or my:
             self.scan_yaw = None
             return math.atan2(my, mx)
