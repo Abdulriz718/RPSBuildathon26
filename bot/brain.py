@@ -471,6 +471,7 @@ class Brain:
                 fight["reload"] = True
         act.update(fight)
 
+        self.last_target = target.id if target is not None else None  # for tools/duel.py stats
         self.draw_debug(obs, act, mode, target, goal, hide)
         return act
 

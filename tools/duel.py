@@ -165,6 +165,7 @@ def run_duel(args):
     memory, last_obs_t = {}, -1.0
     modes = Counter()
     weapon_t = None
+    last_tid, switches, multi_ticks, split_ticks, both_seen = None, 0, 0, 0, 0
     while sim.t < max_t and ours.alive and any(h.m.alive for h in hunters):
         if weapon_t is None and ours.weapons[1] is not None:
             weapon_t = sim.t
@@ -176,6 +177,21 @@ def run_duel(args):
             a.pop("debug", None)
             ours.action = a
             modes[bot.brain.mode] += 1
+            tid = getattr(bot.brain, "last_target", None)
+            if tid is not None and tid < 100:
+                if last_tid is not None and tid != last_tid:
+                    switches += 1
+                last_tid = tid
+            live = [h.m for h in hunters if h.m.alive]
+            if len(live) >= 2:
+                multi_ticks += 1
+                a, b = live[0], live[1]
+                ya = math.atan2(a.pos[1] - ours.pos[1], a.pos[0] - ours.pos[0])
+                yb = math.atan2(b.pos[1] - ours.pos[1], b.pos[0] - ours.pos[0])
+                if abs(S.wrap(ya - yb)) > math.pi / 2:
+                    split_ticks += 1
+                if sim.sees(ours, a) and sim.sees(ours, b):
+                    both_seen += 1
             for h in hunters:
                 if h.m.alive:
                     h.m.action = h.act(ours)
@@ -198,6 +214,8 @@ def run_duel(args):
         "loadout": "+".join(w["kind"] for w in ours.weapons if w),
         "weapon_t": weapon_t,
         "h_loadout": ["+".join(w["kind"] for w in m.weapons if w) for m in hs],
+        "switches": switches, "multi": multi_ticks, "split": split_ticks, "both_seen": both_seen,
+        "first_death_t": min([m.death_t for m in hs if m.death_t is not None], default=None),
     }
 
 
@@ -249,6 +267,13 @@ def summarize(rs, label=""):
     print("  our end loadout: " + ", ".join(f"{k} {v}" for k, v in lo.most_common())
           + (f" | 2nd weapon at median {statistics.median(wt):.0f}s" if wt else "")
           + " | hunters: " + ", ".join(f"{k} {v}" for k, v in hl.most_common()))
+    multi = sum(r["multi"] for r in rs)
+    if multi:
+        fd = [r["first_death_t"] for r in rs if r["first_death_t"] is not None]
+        print(f"  2+ hunters alive: hunters >90 deg apart {100 * sum(r['split'] for r in rs) / multi:.0f}% of the time, "
+              f"both in sight {100 * sum(r['both_seen'] for r in rs) / multi:.0f}% | target switches/duel "
+              f"{sum(r['switches'] for r in rs) / n:.1f} | first kill median "
+              f"{statistics.median(fd) if fd else 0:.0f}s ({len(fd)} duels)")
     errs = sum(r["errors"] for r in rs)
     if errs:
         print(f"  !! {errs} bot decision errors")
