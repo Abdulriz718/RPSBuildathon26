@@ -130,3 +130,107 @@ Rules:
 - [x] `bench.py` + `replay_eval.py` (B)
 - [ ] Sandboxed `check.py` passes on the Docker image (A)
 - [ ] Submission #1 (either)
+
+---
+
+# Phase 5+: closing the gap (2.02 → top teams ~6.3)
+
+## 5.0 Where we stand
+
+| # | Build | Score |
+|---|---|---|
+| 1 | Kit example behaviour | 1.13 |
+| 2 | Nav + zone hold + lead aiming | 1.52 |
+| 4 | Single brain + Phase 3 | 1.88 |
+| 5 | Phase 4 hardening (timing only) | 2.02 |
+
+**What the score means.** In practice, house bots only die to us or the zone, so our score ≈ house bots dead before
+we die. 2.02 means we lose around the 2nd or 3rd hunter. 6.3 means the top teams beat about 6, or outlast them.
+The squad sends its weakest hunters first, one at a time, then more, then everyone late. So the gap is
+(a) **winning early 1v1s quickly and cheaply**, then (b) **surviving the late swarm**.
+
+**Why progress is slow.** Every change so far was a guess scored by one noisy number (±0.5, 4 per hour). We've never
+seen our bot play. Fixing that comes first.
+
+## 5.1 Get eyes on the bot (do first, ~1 h)
+
+The play client (`play.joinbuilders.org`) contains a replay viewer:
+- `?replay=<url>` loads any `.jsonl.gz` replay. Default: `replays/mechanics-v2-16.jsonl.gz`, a real 16-mech match (485 KB).
+- `?debug=<url>&debugslot=<slot>` overlays a bot's debug drawings. **B** toggles bot debug.
+- ← / → seek 10 s, **R** kill replays, **N** nameplates.
+
+Steps:
+1. **[Abdul, 5 min]** On the Mech Royale track page (signed in), look at a scored submission for per-match replay or
+   debug downloads ("watch", "replay", "download"). If they exist, open one in the viewer with `?replay=` and `?debug=`.
+   This is the single most valuable thing on this list.
+2. **[A]** Make the debug drawings worth watching: label = `mode | target id | hp | weapon state | why`, a line to the
+   current goal, cover points, the predicted lead point. Cheap, and the viewer shows them.
+3. **[A]** `tools/replay_stats.py`: parse a replay and print per-mech time alive, damage dealt and taken, shots vs hits,
+   engagement ranges, time spent moving/boosting, where they died. Run it on the sample replay first, to learn how
+   real bots (house bots included) fight: ranges, strafing, cover, weapons.
+4. Watch 5 of our losses. Write each cause of death in `EXPERIMENTS.md` under "Deaths observed".
+   Everything below is then ranked by what we actually see, not by guesses.
+
+If the track page has no replays, use the sample replay for (3), and the duel harness (5.2) becomes our eyes.
+
+## 5.2 Duel harness (A, ~half a day; only if 5.1 gives no replays of our own bot)
+
+A local 1v1 simulator, not a full game: our real `Brain` vs a scripted hunter on the real map.
+- Physics: accel toward commanded velocity, walls and step-up from `world`/`nav`, gravity/jump/jet, turn rate.
+- Weapons: gun (projectile, spread, mag/reload) and laser (charge/hitscan). Rear ×1.5. Regen after 5 s.
+- Vision: our `world.los` + FOV/near range + 5 s memory, producing real `obs` dicts.
+- Hunter: walks at us on A*, strafes, leads its shots, at three accuracy levels (easy/hard/expert stand-ins).
+- Output per duel: who won, time to kill, HP left, our hit rate. `tools/duel.py --n 200` gives a stable number in minutes.
+- Calibrate hunter accuracy and movement against the sample replay's stats, so wins here mean something on the server.
+
+This turns "one noisy number per 15 min" into "200 duels per minute", which is the only way to reach 6+.
+
+## 5.3 Hypotheses, ranked, with the test for each
+
+| # | Hypothesis | Owner | Test |
+|---|---|---|---|
+| H1 | **We miss a lot or hold fire** (tight aim gate, torso slew, target strafing) | B | hit rate in harness/replay; queued config A |
+| H2 | **We retreat out of winnable duels** and take free shots while running | A | harness win rate vs `COVER_LOW_HP`; queued config B |
+| H3 | **We fight with the starting gun only.** A charged laser does 315 damage; 40 floor weapons, ⅓ lasers | B + A | route to the nearest laser/mortar before the first hunter arrives; harness gun-only vs gun+laser |
+| H4 | **Too few cubes.** Each cube is +4% HP/damage (cap 10); 12 drones × 2 cubes; crates 1 each | A | queued config C; harness with 0 vs 5 cubes |
+| H5 | **We're easy to find.** Boosting/walking > 5 m/s makes steps audible up to 90 m | A | walk at < 5 m/s when holding; boost only for zone/retreat |
+| H6 | **The late swarm overruns us in the open** | A | hold a covered anchor with one approach; or a **rooftop** (100 energy ≈ 60 m of climb; hunters must jet up one at a time). Needs jet navigation |
+| H7 | **Wrong upgrades.** Survival first may be wrong for duels | B | harness: armor vs gun_rate/gun_damage first |
+| H8 | **We fight at bad ranges** | B | from replay stats: the range where top bots win; hold it |
+
+## 5.4 Split of work (same ownership as before)
+
+**A (Claude Code):** debug drawings, `replay_stats.py`, duel harness, H2 / H4 / H5 / H6 (movement, cover,
+roof/jet nav, late anchor), weapon-pickup routing for H3.
+**B (Codex):** H1 (aim gate, lead, spread, slew-aware firing), H3 (laser charge timing in duels, swap policy), H7 (upgrades),
+H8 (range control), plus tests in the harness for each.
+
+Interfaces stay as they are: `combat.Weapons.decide/dodge`, `nav.*`, `brain.decide`. A new behaviour goes behind a
+flag in `config.py`, defaulted off until it wins in the harness *and* on the server.
+
+## 5.5 Submission discipline from here
+
+- Keep running the queued config sweeps A–D (`EXPERIMENTS.md`) now; they cost nothing to build.
+- After that, a change is submitted only if it wins clearly in the harness (or is a fix seen in replays).
+- One flag per submission. Re-submit the current best every ~4 submissions so drift shows.
+- Required before every PR, unchanged: `bench.py` (0 errors), `test_brain_fuzz.py`, `test_hardening.py`, `check.py`.
+
+## 5.6 The final is not practice
+
+The final is a 16-team free-for-all: bots fight each other, as in the video (5 dead by 1:04, 10 by 1:40). There, kills
+matter less and survival more. The harness can run FFA-like scenes (2–3 hunters that also target each other) to tune
+`MODE = "ffa"`. Lock for the final whichever commit is best on practice, unless the FFA build is close on practice and
+clearly better in the harness's FFA scenes.
+
+## 5.7 Status after building the duel simulator
+
+- Track page has no replay downloads, so `tools/sim.py` + `tools/duel.py` are our eyes. `tools/replay_stats.py` reads both
+  real replays and `--record` output.
+- Found and fixed (config): RECOVER mode was losing nearly every duel (bot walked away with its trigger off while the
+  hunter followed). New defaults beat hard hunters 82% of the time (was 0%), expert 34% (was 0%).
+- **Next, biggest gain: H3, get a laser early.** With a laser we win 100% vs gun-only hard/expert hunters. Every house
+  bot that lasted took a 2nd weapon within 10 s. Plan: from spawn, scan for pickups (turn the torso, since pickups show
+  only while seen) and route to the nearest laser > lightning > mortar before the first hunter arrives. [A routes, B fires]
+- Then: two-hunter fights (0% wins, 15% of damage from behind): keep both in front, back toward cover so they
+  can't flank. [A]
+- Sim fidelity work [B]: hunters that pick up weapons and use the laser, so "both have lasers" is the normal case.

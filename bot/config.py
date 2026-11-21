@@ -11,7 +11,7 @@ TRACK_VELOCITY_GAP_S = 0.35      # largest gap for a position-based velocity est
 TRACK_AIM_MEMORY_S = 0.75        # keep facing a lost track briefly
 TRACK_SOUND_LOOK_S = 0.75        # look toward a nearby shot when no threat is tracked
 TRACK_SHOT_SOUNDS = frozenset({"gun", "mortar", "laser", "laser_charge", "lightning"})
-GUN_AIM_FRACTION = 0.8          # stay inside this fraction of the target's hit radius
+GUN_AIM_FRACTION = 1.3          # stay inside this fraction of the target's hit radius
 
 # Upgrade preference, best first. Unknown ids rank after these.
 UPGRADE_PRIORITY = (
@@ -38,7 +38,7 @@ STRAFE_SPEED_FRACTION = 0.55
 COVER_RADII_M = (3, 6, 9, 12)
 COVER_SEARCH_INTERVAL_S = 0.8
 COVER_TARGET_MOVE_M = 6.0
-COVER_LOW_HP = 0.55
+COVER_LOW_HP = 0.0   # sim: retreating while chased loses duels (hard: 0% -> 43% win at 0.0)
 COVER_RECOVER_HP = 0.8
 COVER_REACHED_M = 1.2
 COVER_PAIR_BUDGET_MS = 4.0   # cover_pair search gives up after this
@@ -109,7 +109,7 @@ LATE_TINY_REACH_M = 0.5
 ENDGAME = True            # play safer late: earlier retreat, no looting
 ENDGAME_ALIVE = 5         # endgame when this few mechs are alive...
 ENDGAME_T = 360           # ...or after this match time (s)
-ENDGAME_LOW_HP = 0.7      # retreat threshold in the endgame (normal: COVER_LOW_HP)
+ENDGAME_LOW_HP = 0.0      # retreat threshold in the endgame (normal: COVER_LOW_HP)
 
 # FFA mode (final). MODE = "ffa" fights only attackers or weak lone targets, avoids the rest.
 FFA_GRUDGE_S = 6.0        # fight back against anyone who hit us this recently

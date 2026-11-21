@@ -9,3 +9,6 @@
   - `python tools/test_brain_fuzz.py` (drives every mode with faked drops, late game, FFA, all weapons)
   - `python mechfight-kit/mechfight-kit/check/check.py -- python -u bot/main.py`
 - Log every practice submission in `EXPERIMENTS.md`.
+- Before submitting a behaviour change, compare it in the duel simulator against the current defaults:
+  `python tools/duel.py --n 80 --skill hard` and `--skill expert`, plus `--set KEY=VALUE` for config variants.
+  Use `--hunters 2` for multi-attacker cases. A change should win clearly here before it costs a submission.
