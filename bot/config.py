@@ -52,7 +52,7 @@ LOOT_PICKUP_BONUS_M = 16.0
 NAV_CELL = 3.0            # m per coarse nav cell
 NAV_MAX_UP = 1.8          # max rise between neighbouring nav cells (m)
 NAV_DROP = 2.0            # stepping into a wall-adjacent cell is fine if it's this much lower (dropping off)
-NAV_BUDGET_MS = 8.0       # A* time per tick
+NAV_BUDGET_MS = 4.0       # A* time per tick (plans still finish in a few ticks)
 NAV_MAX_EXPAND = 60000    # give up and use the closest node after this many expansions
 NAV_HEURISTIC_W = 1.3     # >1 = weighted A*: far fewer expansions, paths a few % longer
 NAV_REPLAN_S = 2.0        # replan at least this often

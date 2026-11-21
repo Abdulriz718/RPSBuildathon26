@@ -409,8 +409,6 @@ class Brain:
             mf.draw.line([x, y, z + me["stats"]["muzzle_height"]], [tx, ty, tz + target.height / 2], "#ff5040")
         if mode in ("RECOVER", "AVOID", "FIGHT", "DROP"):
             mf.draw.point([goal[0], goal[1], self.world.surface(goal[0], goal[1]) + 1], "#40ff80", 8)
-        for wx, wy in self.nav.path[:20]:
-            mf.draw.point([wx, wy, self.world.surface(wx, wy) + 1], "#40c0ff", 2)
         mf.draw.label(f"{mode} hp {me['hp']:.0f}")
         return act
 
