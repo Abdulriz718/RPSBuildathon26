@@ -38,6 +38,20 @@ class Hunter:
         self.vel_hist = []
         self.noise = (0.0, 0.0)
         self.boost = False
+        self.loot = True
+
+    def loot_goal(self, target_d, los):
+        """House bots grab a 2nd weapon fast. Hunters know all pickups (the squad shares vision)."""
+        if not self.loot or self.m.weapons[1] is not None or (los and target_d < 90):
+            return None
+        best = None
+        for p in self.sim.pickups.values():
+            if p["pos"][2] - self.sim.world.ground(p["pos"][0], p["pos"][1]) > 3:
+                continue
+            d = math.hypot(p["pos"][0] - self.m.pos[0], p["pos"][1] - self.m.pos[1])
+            if d < 80 and (best is None or d < best[0]):
+                best = (d, p)
+        return best[1] if best else None
 
     def act(self, target):
         sim, m, k = self.sim, self.m, self.k
@@ -53,7 +67,13 @@ class Hunter:
         muzzle = (m.pos[0], m.pos[1], m.pos[2] + m.muzzle)
         los = world.los(m.eye_pos(), center) or world.los(m.eye_pos(), (target.pos[0], target.pos[1], target.pos[2] + target.height))
         act = {}
-        if not los or d > k["engage_m"]:
+        lp = self.loot_goal(d, los)
+        if lp is not None:
+            mx, my, jump, boost = self.nav.next_step(m.pos, lp["pos"][:2], t, 1.0)
+            act.update(move=[mx, my], jump=jump, boost=boost)
+            if math.hypot(lp["pos"][0] - m.pos[0], lp["pos"][1] - m.pos[1]) < 3.5:
+                act["take"] = lp["id"]
+        elif not los or d > k["engage_m"]:
             mx, my, jump, boost = self.nav.next_step(m.pos, target.pos[:2], t, 1.0)
             act.update(move=[mx, my], jump=jump, boost=boost or d > 150)
         else:
@@ -83,10 +103,17 @@ class Hunter:
         act["aim"] = [yaw, pitch]
         err = math.hypot(S.wrap(yaw - m.aim[0]), pitch - m.aim[1])
         tol = math.atan2(target.radius * 1.2, d)
-        act["fire"] = [bool(los and d < 225 and err < tol), True]  # slot 1 (laser if held) charges and releases
-        laser = m.weapons[1]
-        if laser and laser["kind"] == "laser":
-            act["fire"][1] = bool(los and d < 270 and (laser["charge"] < laser["stats"]["charge"] or err > tol))
+        act["fire"] = [bool(los and d < 225 and err < tol), False]
+        w1 = m.weapons[1]
+        if w1 and w1["kind"] == "laser":
+            act["fire"][1] = bool(los and d < 270 and (w1["charge"] < w1["stats"]["charge"] or err > tol))
+        elif w1 and w1["kind"] == "lightning":
+            act["fire"][1] = bool(los and d < w1["stats"]["range"] and abs(S.wrap(yaw - m.aim[0])) < 0.25)
+        elif w1 and w1["kind"] == "mortar" and 25 < d < 200:
+            st = w1["stats"]
+            x = min(1.0, st["gravity"] * d / st["speed"] ** 2)
+            act["aim"] = [yaw, 0.5 * math.asin(x)]
+            act["fire"] = [False, abs(S.wrap(yaw - m.aim[0])) < 0.05 and abs(act["aim"][1] - m.aim[1]) < 0.05]
         return act
 
 
@@ -108,7 +135,7 @@ def spawn_points(rng, nav, world, n, min_sep=130, max_sep=220):
 
 
 def run_duel(args):
-    seed, skill, n_hunters, our_w, hunter_w, max_t, record, overrides = args
+    seed, skill, n_hunters, our_w, hunter_w, max_t, record, overrides, n_pickups, hunter_loot = args
     S.patch_brain_for_speed()
     import config
     for key, val in overrides.items():
@@ -126,15 +153,21 @@ def run_duel(args):
     ours = S.Mech(0, pts[0], cfg, our_w, "ours")
     ours.aim = [rng.uniform(-math.pi, math.pi), 0.0]
     sim.add(ours)
+    sim.spawn_pickups(random.Random(seed * 7 + 1), nav, n_pickups)
     hunters = []
     for i in range(n_hunters):
         hm = S.Mech(i + 1, pts[i + 1], cfg, hunter_w, skill)
         sim.add(hm)
-        hunters.append(Hunter(sim, hm, skill, random.Random(seed * 31 + i)))
+        h = Hunter(sim, hm, skill, random.Random(seed * 31 + i))
+        h.loot = hunter_loot
+        hunters.append(h)
     bot = Bot(hello)
     memory, last_obs_t = {}, -1.0
     modes = Counter()
+    weapon_t = None
     while sim.t < max_t and ours.alive and any(h.m.alive for h in hunters):
+        if weapon_t is None and ours.weapons[1] is not None:
+            weapon_t = sim.t
         if sim.tick % 2 == 0:
             obs = sim.observe(ours, memory, last_obs_t)
             last_obs_t = sim.t
@@ -149,7 +182,7 @@ def run_duel(args):
             sim.prune_sounds()
         else:
             for m in sim.mechs.values():
-                m.action = dict(m.action, jump=False, reload=False)
+                m.action = dict(m.action, jump=False, reload=False, take=None, drop=None)
         sim.step()
     if record:
         sim.write_record(record, _sample_header())
@@ -162,6 +195,9 @@ def run_duel(args):
         "shots": ours.shots, "hits": ours.hits,
         "h_shots": sum(m.shots for m in hs), "h_hits": sum(m.hits for m in hs),
         "modes": dict(modes), "errors": bot.errors,
+        "loadout": "+".join(w["kind"] for w in ours.weapons if w),
+        "weapon_t": weapon_t,
+        "h_loadout": ["+".join(w["kind"] for w in m.weapons if w) for m in hs],
     }
 
 
@@ -205,6 +241,14 @@ def summarize(rs, label=""):
           f"{100 * hh / max(hs, 1):.0f}% | dmg out/in {sum(r['dmg_out'] for r in rs) / din:.2f} | "
           f"rear share of dmg taken {100 * sum(r['rear_in'] for r in rs) / din:.0f}%")
     print("  modes: " + ", ".join(f"{k} {100 * v / tot:.0f}%" for k, v in modes.most_common()))
+    lo = Counter(r["loadout"] for r in rs)
+    wt = [r["weapon_t"] for r in rs if r["weapon_t"] is not None]
+    hl = Counter(x for r in rs for x in r["h_loadout"])
+    print("  win% by our end loadout: " + ", ".join(
+        f"{k} {100 * sum(r['win'] for r in rs if r['loadout'] == k) / v:.0f}% (n={v})" for k, v in lo.most_common()))
+    print("  our end loadout: " + ", ".join(f"{k} {v}" for k, v in lo.most_common())
+          + (f" | 2nd weapon at median {statistics.median(wt):.0f}s" if wt else "")
+          + " | hunters: " + ", ".join(f"{k} {v}" for k, v in hl.most_common()))
     errs = sum(r["errors"] for r in rs)
     if errs:
         print(f"  !! {errs} bot decision errors")
@@ -222,10 +266,12 @@ def main():
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--record", help="write a mechreplay/1 file (use with --n 1)")
     ap.add_argument("--set", nargs="*", help="config overrides KEY=VALUE")
+    ap.add_argument("--pickups", type=int, default=40, help="floor weapons on the map (game: 40)")
+    ap.add_argument("--no-hunter-loot", action="store_true", help="hunters keep their starting weapons")
     a = ap.parse_args()
     ov = parse_overrides(a.set)
     jobs = [(a.seed + i, a.skill, a.hunters, tuple(a.ours.split(",")), tuple(a.theirs.split(",")),
-             a.max_t, a.record if a.n == 1 else None, ov) for i in range(a.n)]
+             a.max_t, a.record if a.n == 1 else None, ov, a.pickups, not a.no_hunter_loot) for i in range(a.n)]
     if a.workers > 1 and a.n > 1:
         with Pool(a.workers) as pool:
             rs = pool.map(run_duel, jobs)

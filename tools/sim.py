@@ -105,6 +105,8 @@ class Sim:
         self.mechs = {}
         self.projectiles = []  # dicts: id, owner, kind, pos, vel, left
         self.next_pid = 1
+        self.pickups = {}  # id -> {"id", "kind", "pos"}
+        self.next_pickup = 8000
         self.sounds = []  # (t, kind, pos, source_id)
         self.record = record
         self.frames = []
@@ -224,7 +226,130 @@ class Sim:
         lim = st["pitch_rate"] * dt
         m.aim[1] += max(-lim, min(lim, dp))
 
+    def spawn_pickups(self, rng, nav, n, roof_frac=0.25, kinds=("mortar", "laser", "lightning")):
+        """Floor weapons over the whole map, like loot.floor_count (a quarter on roofs)."""
+        ground = [c for c in range(len(nav.main)) if nav.main[c] and not nav.roof[c]]
+        roofs = [c for c in range(len(nav.roof)) if nav.roof[c] and not nav.Bl[c]]
+        for _ in range(n):
+            pool = roofs if roofs and rng.random() < roof_frac else ground
+            c = rng.choice(pool)
+            x, y = nav.to_xy(c % nav.cnx, c // nav.cnx)
+            self.add_pickup(rng.choice(kinds), (x, y, self.world.surface(x, y)))
+
+    def add_pickup(self, kind, pos):
+        pid = self.next_pickup
+        self.next_pickup += 1
+        self.pickups[pid] = {"id": pid, "kind": kind, "pos": [round(v, 2) for v in pos]}
+        return pid
+
+    def _take(self, m):
+        a = m.action
+        pid = a.get("take")
+        if pid is None:
+            if a.get("drop") in (0, 1) and m.weapons[a["drop"]]:
+                self._drop_slot(m, a["drop"])
+            return
+        p = self.pickups.get(pid)
+        reach = self.cfg["loot"]["pickup_radius"]
+        if p is None:
+            m.events.append({"type": "take_failed", "id": pid, "reason": "gone"})
+            return
+        if math.hypot(p["pos"][0] - m.pos[0], p["pos"][1] - m.pos[1]) > reach or abs(p["pos"][2] - m.pos[2]) > 4:
+            m.events.append({"type": "take_failed", "id": pid, "reason": "range"})
+            return
+        if any(w and w["kind"] == p["kind"] for w in m.weapons):
+            m.events.append({"type": "take_failed", "id": pid, "reason": "have"})
+            return
+        slot = next((i for i, w in enumerate(m.weapons) if w is None), None)
+        if slot is None:
+            slot = a.get("drop")
+            if slot not in (0, 1):
+                m.events.append({"type": "take_failed", "id": pid, "reason": "full"})
+                return
+            self._drop_slot(m, slot)
+        del self.pickups[pid]
+        st = dict(self.cfg["weapons"][p["kind"]])
+        w = {"kind": p["kind"], "cooldown": max(self.cfg["loot"]["equip_s"], st["cooldown"]), "stats": st}
+        if p["kind"] == "gun":
+            w.update(ammo=st["mag"], reload=0.0)
+        if p["kind"] == "laser":
+            w["charge"] = 0.0
+        m.weapons[slot] = w
+        m.events.append({"type": "took", "id": pid, "kind": p["kind"], "slot": slot})
+        self._ev({"e": "weapon", "op": "take", "id": pid, "kind": p["kind"], "by": m.id, "slot": slot})
+
+    def _drop_slot(self, m, slot):
+        w = m.weapons[slot]
+        if w is None or (w["kind"] == "laser" and w["charge"] > 0):
+            return
+        pid = self.add_pickup(w["kind"], m.pos)
+        m.weapons[slot] = None
+        m.events.append({"type": "dropped", "id": pid, "kind": w["kind"], "slot": slot})
+
+    def _lightning(self, m, w):
+        st = w["stats"]
+        if m.energy < st["energy"]:
+            return
+        m.energy -= st["energy"]
+        m.spent_t = self.t
+        w["cooldown"] = st["cooldown"]
+        m.shots += 1
+        self.sounds.append((self.t, "lightning", tuple(m.pos), m.id))
+        o = (m.pos[0], m.pos[1], m.pos[2] + m.muzzle)
+        cone = math.radians(st["cone_deg"]) / 2
+        best = None
+        for t in self.mechs.values():
+            if t is m or not t.alive:
+                continue
+            d = math.hypot(t.pos[0] - o[0], t.pos[1] - o[1])
+            yaw = math.atan2(t.pos[1] - o[1], t.pos[0] - o[0])
+            if d <= st["range"] and abs(wrap(yaw - m.aim[0])) <= cone and self.world.los(o, t.center()):
+                if best is None or d < best[0]:
+                    best = (d, t)
+        if best is None:
+            return
+        hit = best[1]
+        self._damage(hit, m, st["damage"] * self._dmg_mult(m), "lightning", (o[0] - hit.pos[0], o[1] - hit.pos[1]))
+        self._ev({"e": "zap", "id": m.id, "path": [list(o), list(hit.center())], "hits": [hit.id]})
+
+    def _mortar(self, m, w):
+        st = w["stats"]
+        d = aim_dir(*m.aim)
+        o = (m.pos[0], m.pos[1], m.pos[2] + m.height + 0.5)
+        out = m.radius + 0.5
+        start = (o[0] + d[0] * out, o[1] + d[1] * out, o[2] + d[2] * out)
+        self.projectiles.append({"id": self.next_pid, "owner": m.id, "kind": "mortar", "pos": list(start),
+                                 "vel": [d[0] * st["speed"], d[1] * st["speed"], d[2] * st["speed"]],
+                                 "left": 1e9, "ttl": st["ttl"], "dmg": st["damage"] * self._dmg_mult(m),
+                                 "splash": st["splash"] * self._dmg_mult(m), "r": st["splash_radius"],
+                                 "edge": st.get("splash_edge", 0.3), "g": st["gravity"]})
+        self.next_pid += 1
+        w["cooldown"] = st["cooldown"]
+        m.shots += 1
+        self.sounds.append((self.t, "mortar", tuple(m.pos), m.id))
+        self._ev({"e": "fire", "id": m.id, "w": "mortar"})
+
+    def _explode(self, p, at, direct=None):
+        owner = self.mechs.get(p["owner"])
+        if direct is not None:
+            self._damage(direct, owner, p["dmg"], "mortar", (at[0] - direct.pos[0] + 1e-6, at[1] - direct.pos[1]))
+        for t in self.mechs.values():
+            if not t.alive or t is direct:
+                continue
+            dist = math.dist(at, t.center())
+            if dist > p["r"] + t.radius or not self.world.los(at, t.center()):
+                continue
+            f = max(p["edge"], 1 - (1 - p["edge"]) * max(0.0, dist - t.radius) / p["r"])
+            amt = p["splash"] * f * (self.cfg["mech"]["self_damage_mult"] if t is owner else 1.0)
+            self._damage(t, owner if t is not owner else None, amt, "mortar",
+                         (at[0] - t.pos[0] + 1e-6, at[1] - t.pos[1]))
+        self.sounds.append((self.t, "explosion", tuple(at), p["owner"]))
+        self._ev({"e": "boom", "p": p["id"], "at": [round(v, 2) for v in at], "r": p["r"]})
+
     def _weapons(self, m, dt):
+        if m.action.get("take") is not None or m.action.get("drop") is not None:
+            self._take(m)
+            m.action = dict(m.action, take=None, drop=None)
         fire = m.action.get("fire", [False, False])
         for i, w in enumerate(m.weapons):
             if not w:
@@ -247,6 +372,12 @@ class Sim:
                     w["ammo"] -= 1
                     if w["ammo"] == 0:
                         w["reload"] = st["reload"]
+            elif w["kind"] == "lightning":
+                if held and w["cooldown"] <= 0:
+                    self._lightning(m, w)
+            elif w["kind"] == "mortar":
+                if held and w["cooldown"] <= 0:
+                    self._mortar(m, w)
             elif w["kind"] == "laser":
                 if w["cooldown"] > 0 and w["charge"] == 0:
                     continue
@@ -309,6 +440,8 @@ class Sim:
         self._ev({"e": "charge", "id": m.id, "dur": round(w["charge"], 2)})
         hit_to = o if best is None else None
         if best is not None:
+            if any(x and x["kind"] == "mortar" for x in best[1].weapons):
+                dmg *= 1 + st["cookoff"]
             self._damage(best[1], m, dmg, "laser", (-d[0], -d[1]))
             hit_to = (o[0] + d[0] * best[0], o[1] + d[1] * best[0], o[2] + d[2] * best[0])
         else:
@@ -335,8 +468,13 @@ class Sim:
     def _projectiles(self, dt):
         keep = []
         for p in self.projectiles:
+            if p["kind"] == "mortar":
+                p["vel"][2] -= p["g"] * dt
+                p["ttl"] -= dt
             a = tuple(p["pos"])
             b = (a[0] + p["vel"][0] * dt, a[1] + p["vel"][1] * dt, a[2] + p["vel"][2] * dt)
+            if p["kind"] == "mortar" and (p["ttl"] <= 0 or not self.world.in_bounds(b[0], b[1])):
+                continue
             seg = math.dist(a, b)
             wall = self.world.ray_hit(a, b)
             lim = 1.0 if wall is None else wall
@@ -356,9 +494,16 @@ class Sim:
             if hit is not None:
                 owner = self.mechs.get(p["owner"])
                 v = p["vel"]
-                self._damage(hit, owner, p["dmg"], "gun", (-v[0], -v[1]))
+                if p["kind"] == "mortar":
+                    self._explode(p, q, direct=hit)
+                else:
+                    self._damage(hit, owner, p["dmg"], "gun", (-v[0], -v[1]))
                 continue
             p["left"] -= seg
+            if p["kind"] == "mortar" and (wall is not None or b[2] < self.world.surface(b[0], b[1])):
+                f = 1.0 if wall is None else wall
+                self._explode(p, (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f))
+                continue
             if wall is not None or p["left"] <= 0:
                 continue
             p["pos"] = list(b)
@@ -405,6 +550,17 @@ class Sim:
         eye = a.eye_pos()
         return self.world.los(eye, b.center()) or self.world.los(eye, (b.pos[0], b.pos[1], b.pos[2] + b.height))
 
+    def sees_point(self, a, p):
+        d = math.dist(a.pos, p)
+        v = self.cfg["vision"]
+        if d > v["range"]:
+            return False
+        if d > v["near_range"]:
+            yaw = math.atan2(p[1] - a.pos[1], p[0] - a.pos[0])
+            if abs(wrap(yaw - a.aim[0])) > math.radians(v["fov_deg"]) / 2:
+                return False
+        return self.world.los(a.eye_pos(), (p[0], p[1], p[2] + 0.5))
+
     def observe(self, m, memory, last_obs_t):
         """Build the protocol obs for mech m. memory: dict id -> last seen t (updated)."""
         mechs = []
@@ -426,6 +582,7 @@ class Sim:
             if self.world.los(eye, p["pos"]):
                 projectiles.append({"id": p["id"], "kind": p["kind"], "pos": [round(v, 2) for v in p["pos"]],
                                     "vel": [round(v, 2) for v in p["vel"]]})
+        pickups = [dict(p) for p in self.pickups.values() if self.sees_point(m, p["pos"])]
         sounds = []
         sc = self.cfg["sound"]
         noise = math.radians(sc["bearing_noise_deg"])
@@ -451,7 +608,7 @@ class Sim:
                      "aim": [round(m.aim[0], 3), round(m.aim[1], 3)], "hp": round(m.hp, 1), "max_hp": round(m.max_hp),
                      "energy": round(m.energy, 1), "max_energy": m.stats["energy"], "grounded": m.grounded,
                      "cubes": m.cubes, "upgrades": [], "weapons": weapons, "stats": dict(m.stats), "in_zone": True},
-            "mechs": mechs, "projectiles": projectiles, "crates": [], "cubes": [], "pickups": [],
+            "mechs": mechs, "projectiles": projectiles, "crates": [], "cubes": [], "pickups": pickups,
             "sounds": sounds, "beams": [], "events": events, "drops": [],
             "zone": {"center": [cx, cy], "radius": 560, "next_center": [cx, cy], "next_radius": 380,
                      "shrink_start": 1e4, "shrink_end": 1e4 + 50, "dps": 20},
@@ -489,7 +646,7 @@ class Sim:
 
     def write_record(self, path, sample_header):
         h = copy.deepcopy(sample_header)
-        h.update(seed=0, npcs=[], crates=[], pickups=[], drops=[],
+        h.update(seed=0, npcs=[], crates=[], pickups=list(self.pickups.values()), drops=[],
                  zone=[{"center": [0, 0], "radius": 560, "shrink_start": 0, "shrink_end": 0}])
         h["bots"] = [m.name for m in self.mechs.values()]
         h["mechs"] = [{"id": m.id, "name": m.name, "weapons": [w["kind"] for w in m.weapons if w],

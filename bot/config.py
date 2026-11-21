@@ -115,3 +115,13 @@ ENDGAME_LOW_HP = 0.0      # retreat threshold in the endgame (normal: COVER_LOW_
 FFA_GRUDGE_S = 6.0        # fight back against anyone who hit us this recently
 FFA_FINISH_HP = 450       # ...or a lone visible mech below this HP
 FFA_FINISH_M = 90         # ...within this range
+
+# Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
+WEAPON_GRAB = True
+WEAPON_RANK = {"mortar": 1, "lightning": 2, "laser": 3}   # swap up only to a higher rank
+WEAPON_BONUS = {"laser": 70, "lightning": 30, "mortar": 0}  # metres of detour each kind is worth
+WEAPON_MAX_M = 150         # fetch a first weapon up to this far
+WEAPON_SWAP_M = 45         # swap to a better weapon only this close
+WEAPON_FIGHT_M = 80        # with a visible mech closer than this...
+WEAPON_GRAB_IN_FIGHT_M = 20  # ...only fetch weapons within this
+SWEEP_FOR_WEAPONS = True   # turn the torso while walking until we hold a 2nd weapon

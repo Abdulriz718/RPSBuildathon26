@@ -4,6 +4,8 @@ One mode per tick, first match wins:
   ZONE     outside / about to be caught by the zone: run for the safe circle, shoot what we see
   DROP     a supply drop is landing nearby and nobody is around it: capture it (+3 cubes, full HP)
   RECOVER  low HP: legs go to cover away from the threat, torso keeps facing it, heal
+  WEAPON   fetch the best floor weapon we've seen (laser > lightning > mortar), shooting on the way;
+           swap up to a better one close by
   FIGHT    a mech we want to fight is in view: hide/peek around cover, else strafe; dodge shots
   AVOID    (ffa mode) a mech is in view that we don't want to fight: break line of sight
   LOOT     early game, nobody around: pickups, cubes, crates, lone NPC drones
@@ -214,6 +216,39 @@ class Brain:
                 return (pos[0], pos[1]), crate
         return (p[0], p[1]), None
 
+    def weapon_goal(self, obs, mech):
+        """(pickup id, (x, y, z), drop slot or None) for the weapon worth fetching now, or None."""
+        if not config.WEAPON_GRAB:
+            return None
+        me = obs["self"]
+        pos = me["pos"]
+        slot1 = me["weapons"][1]
+        held = {w["kind"] for w in me["weapons"] if w}
+        if slot1 is not None and (slot1.get("charge") or slot1["kind"] not in config.WEAPON_RANK):
+            return None
+        have = config.WEAPON_RANK.get(slot1["kind"], 0) if slot1 else 0
+        mech_d = hdist(mech.pos, pos) if mech is not None and mech.age == 0 else None
+        best = None
+        for iid, (typ, kind, p, _) in self.loot.items.items():
+            if typ != "pickup" or kind in held or kind not in config.WEAPON_RANK:
+                continue
+            if config.WEAPON_RANK[kind] <= have:
+                continue
+            if p[2] - self.world.ground(p[0], p[1]) > 3:
+                continue  # roof: needs jet navigation
+            d = hdist(p, pos)
+            limit = config.WEAPON_MAX_M if slot1 is None else config.WEAPON_SWAP_M
+            if d > limit:
+                continue
+            if mech_d is not None and mech_d < config.WEAPON_FIGHT_M and d > config.WEAPON_GRAB_IN_FIGHT_M:
+                continue  # someone is on us: only grab it if it's right here
+            score = d - config.WEAPON_BONUS.get(kind, 0)
+            if best is None or score < best[0]:
+                best = (score, iid, p)
+        if best is None:
+            return None
+        return best[1], best[2], (1 if slot1 is not None else None)
+
     def pick_npc(self, me):
         if me["hp"] < me["max_hp"] * config.NPC_FARM_HP:
             return None
@@ -320,6 +355,7 @@ class Brain:
         visible_mech = mech is not None and mech.age == 0
         dgoal = None if (visible_mech and not self.recovering) or hurry else self.drop_goal(obs)
 
+        wgoal = None if hurry or self.recovering else self.weapon_goal(obs, mech)
         goal = zgoal
         stand = hide = False
         move = None  # direct move override (strafe)
@@ -338,6 +374,12 @@ class Brain:
             goal = self.retreat_goal(obs, threat, t)
             stand = self.hidden_from(me, threat)
             hide = True
+        elif wgoal is not None:
+            mode, goal = "WEAPON", (wgoal[1][0], wgoal[1][1])
+            if hdist(wgoal[1], (x, y)) <= self.reach - 0.5 and abs(wgoal[1][2] - z) <= 4:
+                act["take"] = wgoal[0]
+                if wgoal[2] is not None:
+                    act["drop"] = wgoal[2]
         elif target is not None:
             mode = "FIGHT"
             pair = self.fight_spot(obs, target, t)
@@ -392,7 +434,7 @@ class Brain:
         act.update(move=[mx, my], boost=boost, jump=jump)
 
         # torso
-        act["aim"] = [self.idle_yaw(mx, my, me), 0.0]
+        act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and me["weapons"][1] is None), 0.0]
         if target is None and threat is not None and mode in ("RECOVER", "AVOID"):
             act["aim"] = [math.atan2(threat.pos[1] - y, threat.pos[0] - x), 0.0]  # never show our back
         fight = self.weapons.decide(me, target, self.world)
@@ -464,12 +506,13 @@ class Brain:
                 return sign * dx, sign * dy
         return None
 
-    def idle_yaw(self, mx, my, me):
-        """Look toward a recent threat, then travel direction, then sweep."""
+    def idle_yaw(self, mx, my, me, sweep=False):
+        """Look toward a recent threat, then travel direction, then sweep.
+        sweep=True keeps turning while walking too: pickups only show while seen."""
         bearing = self.track.threat_bearing()
         if bearing is not None:
             return bearing
-        if mx or my:
+        if (mx or my) and not sweep:
             self.scan_yaw = None
             return math.atan2(my, mx)
         if self.scan_yaw is None:
