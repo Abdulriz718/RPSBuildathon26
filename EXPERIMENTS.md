@@ -47,9 +47,20 @@ Win % for our bot against one scripted hunter. The hunter knows where we are, cl
 - Old bot spent 45-60% of each duel in RECOVER with its trigger off, while the hunter followed and kept shooting.
 - `STRAFE_S` 0.6 vs 2.5: no difference.
 - With 2 hunters, 15% of damage taken is from behind (x1.5).
-- Not modelled: trees, hunters using cover or weapons, crates/drones/zone. Use for comparisons, not absolute numbers.
+- Not modelled: trees, hunters using cover, crates/drones/zone. Use for comparisons, not absolute numbers.
+
+With 40 floor weapons (a quarter on roofs) and hunters that loot them and use mortar/lightning/laser (100 duels each):
+
+| config | hard | expert | our end loadout (of 100) |
+|---|---|---|---|
+| new defaults, no weapon policy | 72 | 48 | gun-only 64-70 |
+| + WEAPON mode (now default) | 79 | 65 | gun-only 28-31, laser 32-37 |
+
+Expert, 200 duels, win % by what we held at the end: gun+laser 91, gun+mortar 50, gun+lightning 48, gun only 36.
+Variants (fetch range 250 m, swap range 90 m, bigger laser bonus, ignore fights under 40 m) all 65-66%: defaults kept.
 
 | 6 | | | `COVER_LOW_HP=0`, `GUN_AIM_FRACTION=1.3`, `ENDGAME_LOW_HP=0` (sim: hard 0% -> 82%) | | |
+| 7 | | | #6 + WEAPON mode: fetch best seen floor weapon (laser > lightning > mortar), sweep torso while unarmed, swap up to laser within 45 m (sim expert: 48% -> 65%) | | |
 
 ## Sample replay (play.joinbuilders.org/replays/mechanics-v2-16.jsonl.gz): 16 house bots, FFA
 
