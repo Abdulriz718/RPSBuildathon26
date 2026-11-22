@@ -182,6 +182,19 @@ SLICE_RANGE_COST = 0.6
 # Laser peek-charging (needs SLICE): while the laser charges and isn't full, move to the hidden spot; step out to fire.
 SLICE_LASER_PEEK = False
 
+# Awareness (brain.py). The server keeps reporting a mech's real position for vision.memory_s (5 s) after it
+# leaves view; these cover what happens after that, plus where the torso looks.
+THREAT_MEMORY = True       # keep enemy tracks THREAT_MEMORY_S; with nobody in view, face the newest lost one
+THREAT_MEMORY_S = 12.0     # and skip drones/loot while it was this recent...
+THREAT_WATCH_M = 150       # ...and this close
+THREAT_PREDICT_S = 2.0     # extrapolate a lost track's velocity at most this long
+SCAN_ALWAYS = True         # sweep the torso whenever there's no target (not only until a 2nd weapon)
+SCAN_RELOAD_S = 1.2        # in a fight, look around while hidden and the gun has more than this reload left
+STRAFE_JITTER = False      # random flips + flip on enemy fire. Sim: hunter hit rate on us 32% -> 34%, so off
+STRAFE_JITTER_S = (0.6, 1.4)
+JUKE_MIN_S = 0.35          # at most one fire-triggered flip this often
+JUKE_NEAR_M = 15.0         # a new bullet this close to the target = it just fired
+
 # Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
 WEAPON_GRAB = True
 WEAPON_RANK = {"mortar": 1, "lightning": 2, "laser": 3}   # swap up only to a higher rank
