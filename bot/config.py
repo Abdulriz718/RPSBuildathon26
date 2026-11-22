@@ -134,22 +134,22 @@ FFA_FINISH_M = 90         # ...within this range
 
 # Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
 WEAPON_GRAB = True
-WEAPON_RANK = {"mortar": 1, "lightning": 2, "laser": 3}   # swap up only to a higher rank
+WEAPON_RANK = {"laser": 3}  # laser only: sim says holding lightning/mortar is worse than the gun alone
 WEAPON_BONUS = {"laser": 70, "lightning": 30, "mortar": 0}  # metres of detour each kind is worth
-WEAPON_MAX_M = 150         # fetch a first weapon up to this far
+WEAPON_MAX_M = 250         # fetch a laser up to this far
 WEAPON_SWAP_M = 45         # swap to a better weapon only this close
 WEAPON_FIGHT_M = 80        # with a visible mech closer than this...
 WEAPON_GRAB_IN_FIGHT_M = 20  # ...only fetch weapons within this
 SWEEP_FOR_WEAPONS = True   # turn the torso while walking until we hold a 2nd weapon
 
 # Survival gameplans (brain.py). Off until they win in tools/ffa.py and tools/duel.py.
-AVOID_FIGHT_SOUNDS = False  # hold away from fights we hear/see that aren't aimed at us
+AVOID_FIGHT_SOUNDS = True   # hold away from fights we hear/see that aren't aimed at us
 DANGER_SOUNDS = frozenset({"gun", "mortar", "explosion", "laser", "laser_charge", "lightning"})
 DANGER_SOUND_DISTS = ("near", "mid")   # "near" < 60 m, "mid" < 160 m
 DANGER_MEMORY_S = 6.0
 DANGER_STEP_M = 40         # hold this far from where we are, away from the fights
 DANGER_ZONE_FRAC = 0.85    # ...but inside this fraction of the next circle
-MULTI_DISENGAGE = False    # back off to cover when 2+ attackers are on us
+MULTI_DISENGAGE = True     # back off to cover when 2+ attackers are on us
 MULTI_FINISH_HP = 400      # ...unless our target is this close to dead
 
 # Roof climbing (nav.py roof_step): reach weapons on roofs (a quarter of floor loot).
@@ -160,3 +160,32 @@ ROOF_REGION_MAX = 4000     # cells searched per roof
 ROOF_BASE_REACH_M = 4.0    # start the climb this close to the climb point
 ROOF_ENERGY_SPARE = 15     # energy to keep beyond the climb itself
 ROOF_REPLAN_S = 5.0
+
+# Cube collection (brain.py CUBES mode). Each cube: +4% max HP and damage (cap 10); kills drop victim cubes + 2.
+CUBE_COLLECT = True
+CUBE_MAX_M = 50            # walk this far for a cube when nobody is close
+CUBE_SAFE_M = 60           # "nobody close" = our target is farther than this
+CUBE_FIGHT_M = 12          # mid-fight, still grab cubes this close
+
+# Fire the gun together with lightning/laser, and only lob mortars when the gun can't hit (combat.py)
+COMBINED_FIRE = True
+
+# Abdul's requests (not sim-tested by request):
+# 1. under fire: zig-zag across the attacker's line and hop with short jet bursts
+ZIGZAG_UNDER_FIRE = True
+ZIGZAG_HURT_S = 1.5        # "under fire" = hit within this long, or a shot about to land
+ZIGZAG_S = 0.45            # flip direction this often
+ZIGZAG_KEEP = 0.5          # how much of the mode's own movement to keep while weaving
+ZIGZAG_HOP_EVERY_S = 1.2   # jump this often while under fire...
+ZIGZAG_HOP_ENERGY = 35     # ...if energy is at least this
+ZIGZAG_JET_S = 0.35        # jet this long after each jump
+# 2. stay away from people: hold away from mechs seen recently; don't start fights with far mechs
+AVOID_PEOPLE = True
+AVOID_PEOPLE_M = 200       # mechs within this count as people to keep away from
+AVOID_ENGAGE_M = 90        # don't start a fight with a mech farther than this...
+AVOID_PROVOKED_S = 4.0     # ...unless it hit us this recently
+# 3. laser search: while we have no laser, roam the safe circle scanning for one
+LASER_ROAM = True
+LASER_ROAM_UNTIL_S = 240
+LASER_ROAM_S = 12          # pick a new waypoint this often
+LASER_ROAM_STEP_M = 70     # waypoint distance
