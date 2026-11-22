@@ -103,7 +103,7 @@ LOOT_UNTIL_S = 150        # actively route to loot before this match time
 LOOT_RADIUS = 90          # only detour this far for loot
 LOOT_ZONE_FRAC = 0.9      # loot must lie within this fraction of the next zone radius
 CRATE_SHOOT_M = 60        # stop and shoot crates from this range
-NPC_FARM_M = 70           # attack NPC drones closer than this when no mech is around
+NPC_FARM_M = 0            # attack NPC drones closer than this when no mech is around (was 70; #15 tests 0)
 NPC_FARM_HP = 0.7         # ... and our HP is above this fraction
 LOOT_FORGET_M = 20        # forget remembered loot when this close and it isn't listed
 
