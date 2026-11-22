@@ -117,8 +117,18 @@ class Hunter:
         return act
 
 
-def spawn_points(rng, nav, world, n, min_sep=130, max_sep=220):
+def spawn_points(rng, nav, world, n, min_sep=130, max_sep=220, circle=None):
     cells = [c for c in range(len(nav.main)) if nav.main[c] and not nav.roof[c]]
+    if circle:
+        center, radius = circle
+        pts = []
+        for c in rng.sample(cells, len(cells)):
+            p = nav.to_xy(c % nav.cnx, c // nav.cnx)
+            if math.dist(p, center) <= radius and all(math.dist(p, q) >= min_sep for q in pts):
+                pts.append(p)
+                if len(pts) == n:
+                    return [(x, y, world.surface(x, y)) for x, y in pts]
+        raise ValueError("insufficient walkable spawns inside the initial zone")
     while True:
         c = rng.choice(cells)
         a = nav.to_xy(c % nav.cnx, c // nav.cnx)
@@ -134,7 +144,7 @@ def spawn_points(rng, nav, world, n, min_sep=130, max_sep=220):
             return [(x, y, world.surface(x, y)) for x, y in pts]
 
 
-def run_duel(args):
+def run_duel(args, evaluation=False):
     seed, skill, n_hunters, our_w, hunter_w, max_t, record, overrides, n_pickups, hunter_loot = args
     # Worker processes run many jobs: start each from the defaults in bot/config.py, or one variant's
     # overrides leak into the next (this silently mixed MODE='ffa' into later variants once).
@@ -150,8 +160,13 @@ def run_duel(args):
     hello = S.base_hello()
     hello["slot"] = 0
     cfg = hello["config"]
-    pts = spawn_points(rng, nav, world, 1 + n_hunters)
+    arena = evaluation and n_hunters == 15
+    circle = (cfg["zone"]["start_center"], cfg["zone"]["start_radius"]) if arena else None
+    pts = spawn_points(rng, nav, world, 1 + n_hunters, circle=circle)
     sim = S.Sim(cfg, world, seed=seed, record=record)
+    if arena:
+        sim.zone = S.Zone(cfg["zone"], random.Random(seed * 13 + 5))
+    directions, avoided = Counter(), Counter()
     if record:
         sim.start_record()
     ours = S.Mech(0, pts[0], cfg, our_w, "ours")
@@ -160,7 +175,8 @@ def run_duel(args):
     sim.spawn_pickups(random.Random(seed * 7 + 1), nav, n_pickups)
     hunters = []
     for i in range(n_hunters):
-        hm = S.Mech(i + 1, pts[i + 1], cfg, hunter_w, skill)
+        kit = BENCH_LOADOUTS[i % len(BENCH_LOADOUTS)] if arena else hunter_w
+        hm = S.Mech(i + 1, pts[i + 1], cfg, kit, skill)
         sim.add(hm)
         h = Hunter(sim, hm, skill, random.Random(seed * 31 + i))
         h.loot = hunter_loot
@@ -170,14 +186,17 @@ def run_duel(args):
     modes = Counter()
     weapon_t = None
     last_tid, switches, multi_ticks, split_ticks, both_seen = None, 0, 0, 0, 0
-    while sim.t < max_t and ours.alive and any(h.m.alive for h in hunters):
+    while sim.t < max_t and sum(m.alive for m in sim.mechs.values()) > 1 and (arena or ours.alive):
         if weapon_t is None and ours.weapons[1] is not None:
             weapon_t = sim.t
         if sim.tick % 2 == 0:
             obs = sim.observe(ours, memory, last_obs_t)
+            if sim.zone:
+                cx, cy, radius = sim.zone.circle(sim.t)
+                obs["zone"].update(center=[cx, cy], radius=radius)
             last_obs_t = sim.t
             S.mf.draw.clear()
-            a = bot.act(obs)
+            a = bot.act(obs) if ours.alive else {}
             a.pop("debug", None)
             ours.action = a
             modes[bot.brain.mode] += 1
@@ -198,16 +217,37 @@ def run_duel(args):
                     both_seen += 1
             for h in hunters:
                 if h.m.alive:
-                    h.m.action = h.act(ours)
+                    target = min((m for m in sim.mechs.values() if m.alive and m is not h.m),
+                                 key=lambda m: math.dist(m.pos, h.m.pos)) if arena else ours
+                    h.m.action = h.act(target)
+                    if arena and math.dist(h.m.pos[:2], obs["zone"]["center"]) > obs["zone"]["radius"]:
+                        mx, my, jump, boost = h.nav.next_step(h.m.pos, obs["zone"]["next_center"], sim.t, 1)
+                        h.m.action.update(move=[mx, my], jump=jump, boost=True)
             sim.prune_sounds()
         else:
             for m in sim.mechs.values():
                 m.action = dict(m.action, jump=False, reload=False, take=None, drop=None)
+        if evaluation and not arena:
+            pressure = bool(sim.projectiles) and any(p["owner"] != 0 for p in sim.projectiles)
+            pressure |= any(h.m.alive and any(h.m.action.get("fire", ())) for h in hunters)
+            damage = ours.dmg_in
+            mx, my = ours.action.get("move", (0, 0))
+            direction = "still"
+            if math.hypot(mx, my) > 0.05:
+                octant = round(S.wrap(math.atan2(my, mx) - ours.aim[0]) / (math.pi / 4)) % 8
+                direction = ("front","front-left","left","back-left","back","back-right","right","front-right")[octant]
         sim.step()
+        if evaluation and not arena and pressure:
+            directions[direction] += 1
+            avoided[direction] += ours.dmg_in == damage
     if record:
         sim.write_record(record, _sample_header())
     hs = [h.m for h in hunters]
     return {
+        "points": sum((not h.alive and (ours.alive or h.death_t <= ours.death_t))
+                      or (ours.alive and h.alive and ours.hp >= h.hp) for h in hs),
+        "zone_survived": not ours.zone_death, "jet_gain": ours.jet_gain, "jet_energy": ours.jet_energy,
+        "directions": dict(directions), "avoided": dict(avoided),
         "seed": seed, "win": ours.alive and not any(m.alive for m in hs),
         "timeout": ours.alive and any(m.alive for m in hs), "t": sim.t,
         "hp": ours.hp if ours.alive else 0.0, "kills": sum(not m.alive for m in hs),
@@ -303,6 +343,9 @@ def summarize(rs, label=""):
     errs = sum(r["errors"] for r in rs)
     if errs:
         print(f"  !! {errs} bot decision errors")
+
+
+BENCH_LOADOUTS = (("gun",), ("gun","laser"), ("gun","mortar"), ("gun","lightning"))
 
 
 def main():

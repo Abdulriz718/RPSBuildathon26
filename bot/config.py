@@ -36,6 +36,12 @@ DODGE_BUFFER_M = 0.75
 DODGE_STEP_M = 3.0
 # Experimental defensive movement. Compare against the scored farm build.
 DEFENSIVE_EVASION = False
+DUEL_EVASION = False  # experimental 1v1 projectile evasion, including jet bursts
+DUEL_EVADE_ANGLES = (0, 45, -45, 90, -90, 135, -135, 180)
+DUEL_JET_RESERVE = 25.0
+DUEL_JET_COST = 0.45
+DUEL_JUMP_COST = 0.15
+DUEL_TURN_COST = 0.75
 EVADE_HORIZON_S = 0.5
 EVADE_STEPS = 5
 EVADE_TURNS_DEG = (0, -35, 35, -70, 70, -105, 105)

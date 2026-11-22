@@ -130,3 +130,139 @@ Sim fixes this round (earlier numbers were wrong): (1) worker processes kept one
 next variant, so everything after `MODE='ffa'` in a comparison silently ran in ffa mode; now each job reloads
 `bot/config.py`. (2) A*, cover search and the tick guard ran on wall-clock budgets, so results depended on CPU load;
 the sim now gives them room, and a repeated seed reproduces exactly.
+
+## New cycle, Phase 1 — measurement only
+
+The team confirmed that commit `5e443a9` earned the official practice score of **3.25**.
+The Phase 1 benchmark used that same bot revision.
+
+- `tools/duel.py` runs the bot and expert Hunter decisions every two simulation ticks.
+  `tools/sim.py` applies movement, rotation, energy, weapon triggers, projectile travel,
+  damage and regen at 20 Hz. Grounded jump starts flight; airborne boost spends jet
+  energy for upward acceleration. `Weapons.dodge` handles projectile/charge threats;
+  experimental all-direction escape scoring is behind the existing defensive flag.
+- In arena evaluation, 16 mechs start on walkable ground inside the first circle.
+  Fifteen expert opponents target their nearest living rival. The shrinking circle
+  interpolates center and radius, damages outside mechs without armor, and interrupts
+  regen. Rank uses death tick, shared placement on ties, and HP for clock survivors.
+  Points are 16 minus place. This expert FFA differs from official coordinated practice.
+- The zone uses the protocol's phase holds, shrink durations, radii and DPS. The
+  evaluation-only time/radius scales and seeded center drift live beside `MatchZone` in
+  `tools/sim.py`. The reference clip covers only the opening, so the protocol supplies
+  the full approximately 6:55 collapse. The limit is eight minutes.
+- `tools/bench.py --matches` compares farm and FFA modes, four test starting kits
+  (gun alone or paired with laser, mortar or lightning), all 16 ordered 1v1 kit pairs
+  per seed, and mixed kits plus floor pickups in arena matches. Duels keep their kits
+  fixed. The simulator omits upgrade offers, NPCs, crates and supply drops. Numeric
+  weapon stats are the baseline rules; this is not an exhaustive upgrade sweep.
+- Metrics: 1v1 evasion is damage-free 20 Hz ticks divided by ticks with a firing enemy
+  or hostile projectile in flight. This measures exposure, including cover and misses;
+  it is not per-shot dodge probability. Direction is commanded movement relative to
+  torso yaw. Per-weapon rows group by expert starting kit. Jet efficiency is positive
+  vertical metres during powered flight per jet energy spent across both scenario types.
+  Zone survival counts arena matches without zone-caused death, including combat deaths.
+- Local checks: 16 unit tests passed, sparse and full-match hardening passed, farm/FFA
+  fuzz p99 4.8 ms. Replay bench: 900 decisions, p99 0.71 ms, zero errors/fallbacks.
+  Official checker: 300/300 on time, p99 2.3 ms.
+
+### Baseline observations
+
+One fixed seed (1) and one fresh random seed (5335629), shared across modes. Replay
+the matrix with `python tools/bench.py --matches --seeds 1 5335629 --random-seeds 0`.
+Each mode played 8 arena matches and 32 duels. These two seed clusters are a small
+baseline for paired changes, not a leaderboard forecast.
+
+| Metric | Farm | FFA |
+|---|---:|---:|
+| Arena points by seed, within seed gun / laser / mortar / lightning | 3,9,8,8 / 5,6,7,7 | 3,8,7,8 / 9,9,8,7 |
+| overall_score | 6.625 | 7.375 |
+| Arithmetic difference vs official 3.25 (different opponent format) | +3.375 | +4.125 |
+| 1v1_evasion_rate | 6533/7098 | 10981/11594 |
+| jetpack_efficiency (metres/energy) | 101.46/171 | 301.995/597.75 |
+| zone_survival_rate | 8/8 | 8/8 |
+
+Damage-free / pressured ticks by direction and by expert kit:
+
+| Group | Farm | FFA |
+|---|---:|---:|
+| Front | 0/0 | 12/12 |
+| Front-left | 0/0 | 0/0 |
+| Left | 3622/3913 | 3448/3606 |
+| Back-left | 32/44 | 1177/1193 |
+| Back | 29/33 | 1431/1436 |
+| Back-right | 60/92 | 212/248 |
+| Right | 2044/2270 | 3249/3645 |
+| Front-right | 48/48 | 38/40 |
+| Still | 698/698 | 1414/1414 |
+| Gun only | 1517/1722 | 1809/2025 |
+| Gun + laser | 1188/1334 | 1493/1643 |
+| Gun + mortar | 2599/2605 | 6204/6243 |
+| Gun + lightning | 1229/1437 | 1475/1683 |
+
+0/0 means no exposure observed. No policy update or training occurred.
+
+## New cycle, Phase 2 — directional evasion and jetpack
+
+The team reports an official **3.4**. Local comparisons use the latest merged
+revision, `dd6ac5d`. The log does not associate the 3.4 submission with a SHA.
+This comparison uses Abdul's merged zone simulator with current-circle observations.
+Its scores should be compared within this table because the arena changed after
+Phase 1 and official practice uses coordinated opponents.
+
+The `DUEL_EVASION` experiment compares the existing movement command with eight
+directions, grounded jumps, and short jet bursts when one opponent is tracked.
+It keeps the existing command unless it predicts projectile contact and finds a
+safer path. It factors in acceleration, gravity, terrain, charge slowdown,
+energy reserve, and both current and next circles. Roof pickup navigation is
+provided by the merged bot.
+
+| Metric | Farm default | Farm + evasion | FFA default | FFA + evasion |
+|---|---:|---:|---:|---:|
+| Mean arena placement points | 7.375 | 7.125 | 6.000 | 7.375 |
+| Damage-free ticks under pressure in 1v1 | 92.03% | 93.72% | 94.71% | 95.47% |
+| Powered ascent metres | 90.78 | 128.92 | 294.14 | 406.30 |
+| Jet energy spent | 153.00 | 222.00 | 594.00 | 807.75 |
+| Metres per jet energy | 0.5933 | 0.5807 | 0.4952 | 0.5030 |
+| Arena matches without a zone death | 8/8 | 8/8 | 8/8 | 8/8 |
+
+`python tools/bench.py --matches --seeds 1 5335629 --random-seeds 0` runs the
+default. Append `--set DUEL_EVASION=True` to run the candidate. Eight arenas
+and 32 duels per mode per variant. Both configured modes with the candidate
+produced observations in all eight movement directions. Direction coverage is
+uneven. Candidate farm front and front-left had 30 and 32 pressured ticks.
+
+Decision: leave `DUEL_EVASION` off by default. The two seed clusters show lower
+farm placement and higher FFA placement.
+Local checks passed: 17 focused tests, hardening, replay benchmark, fuzz with
+the candidate enabled, and 300/300 protocol observations answered on time.
+
+Practice follow-up (team-reported): the next submission scored **3.17**,
+**0.23 below 3.4**. The checked-in `c3ef5f8` config has `DUEL_EVASION=False`.
+The scorer's submitted SHA and flag setting are unconfirmed, so the result is
+recorded without attributing the change to evasion. **3.4 remains the best
+confirmed score.**
+
+## New cycle, Phase 3 — offline movement tuning
+
+Farm mode on `c3ef5f8`. Training seeds 1 and 5335629, holdout seeds 271828 and
+7813031. Each row represents 8 arenas and 32 expert duels. The higher reserve
+candidate changed only the Phase 2 jet energy reserve from 25 to 45. It tied the
+original evasion candidate on training, so the original advanced to holdout.
+
+| Split and setting | Mean arena points | Duel wins | Damage-free pressured ticks | Jet metres/energy | No zone death |
+|---|---:|---:|---:|---:|---:|
+| Training, default | 7.375 | 16/32 | 92.03% | 90.78/153.00 | 8/8 |
+| Training, evasion | 7.125 | 21/32 | 93.72% | 128.92/222.00 | 8/8 |
+| Training, evasion with reserve 45 | 7.125 | 21/32 | 93.72% | 128.92/222.00 | 8/8 |
+| Holdout, default | 8.625 | 17/32 | 94.46% | 275.01/463.50 | 8/8 |
+| Holdout, evasion | 8.875 | 22/32 | 95.52% | 302.975/525.00 | 8/8 |
+
+Evasion gained five duel wins on each split and raised jet energy use. Its arena
+placement changed by -0.25 on training and +0.25 on holdout. The default passed
+the selection gate because the evasion candidate failed to improve both splits.
+These are simulated placements with a small number of distinct arena seeds.
+The official record remains 3.4 followed by 3.17. No submission was made.
+
+Reproduce with `python tools/bench.py --tune-movement --seeds 1 5335629 --holdout-seeds 271828 7813031 --workers 4`.
+The replay benchmark measured 1.88 ms p99 with zero fallbacks. All 17 unit tests
+passed and the protocol checker received all 300 answers on time.
