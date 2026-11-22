@@ -36,6 +36,7 @@ def base_hello():
     with gzip.open(STREAM, "rt") as f:
         hello = json.loads(f.readline())
     hello["map"]["dir"] = str(ROOT / "arena")
+    hello["config"]["bot"]["tick_budget_ms"] = 1e6  # main.py's time guard: off in the sim (see patch_brain_for_speed)
     return hello
 
 
@@ -96,6 +97,47 @@ class Mech:
         return any(w and w["kind"] == "laser" and w["charge"] > 0 for w in self.weapons)
 
 
+class Zone:
+    """Shrinking circle from config.zone: hold, then shrink toward a random circle inside the current one."""
+
+    def __init__(self, zcfg, rng):
+        self.phases = []
+        c, r = list(zcfg["start_center"]), zcfg["start_radius"]
+        t = 0.0
+        for ph in zcfg["phases"]:
+            nr = ph["radius"]
+            off = (r - nr) * math.sqrt(rng.random())
+            a = rng.uniform(-math.pi, math.pi)
+            nc = [c[0] + off * math.cos(a), c[1] + off * math.sin(a)]
+            self.phases.append({"start": t, "shrink_start": t + ph["hold_s"], "shrink_end": t + ph["hold_s"] + ph["shrink_s"],
+                                "center": c, "radius": r, "next_center": nc, "next_radius": nr, "dps": ph["dps"]})
+            t += ph["hold_s"] + ph["shrink_s"]
+            c, r = nc, nr
+
+    def phase(self, t):
+        for ph in self.phases:
+            if t < ph["shrink_end"]:
+                return ph
+        return self.phases[-1]
+
+    def circle(self, t):
+        ph = self.phase(t)
+        if t <= ph["shrink_start"]:
+            return ph["center"][0], ph["center"][1], ph["radius"]
+        f = min(1.0, (t - ph["shrink_start"]) / max(ph["shrink_end"] - ph["shrink_start"], 1e-9))
+        cx = ph["center"][0] + (ph["next_center"][0] - ph["center"][0]) * f
+        cy = ph["center"][1] + (ph["next_center"][1] - ph["center"][1]) * f
+        return cx, cy, ph["radius"] + (ph["next_radius"] - ph["radius"]) * f
+
+    def inside(self, t, p):
+        cx, cy, r = self.circle(t)
+        return math.hypot(p[0] - cx, p[1] - cy) <= r
+
+    def obs(self, t):
+        ph = self.phase(t)
+        return {k: ph[k] for k in ("center", "radius", "next_center", "next_radius", "shrink_start", "shrink_end", "dps")}
+
+
 class Sim:
     def __init__(self, cfg, world, seed=0, record=None):
         self.cfg, self.world = cfg, world
@@ -110,6 +152,8 @@ class Sim:
         self.sounds = []  # (t, kind, pos, source_id)
         self.record = record
         self.frames = []
+        self.zone = None  # Zone, for full-match scenes
+        self.deaths = []  # (t, id) in order
 
     @property
     def t(self):
@@ -147,6 +191,11 @@ class Sim:
                 self._move(m, dt)
                 self._weapons(m, dt)
         self._projectiles(dt)
+        if self.zone is not None:
+            dps = self.zone.phase(self.t)["dps"]
+            for m in self.mechs.values():
+                if m.alive and not self.zone.inside(self.t, m.pos):
+                    self._damage_zone(m, dps * dt)
         for m in self.mechs.values():
             if m.alive and self.t - m.last_combat >= m.stats["regen_delay"]:
                 m.hp = min(m.max_hp, m.hp + m.stats["regen_per_s"] * dt)
@@ -510,6 +559,18 @@ class Sim:
             keep.append(p)
         self.projectiles = keep
 
+    def _damage_zone(self, t, amt):
+        amt = min(amt, t.hp)
+        t.hp -= amt
+        t.dmg_in += amt
+        t.zone_in = getattr(t, "zone_in", 0.0) + amt
+        t.last_combat = self.t
+        if t.hp <= 0 and t.alive:
+            t.alive = False
+            t.death_t = self.t
+            self.deaths.append((self.t, t.id))
+            self._ev({"e": "death", "id": t.id, "by": None})
+
     def _damage(self, t, src, amt, weapon, toward_src):
         """toward_src: horizontal direction from target back to where the shot came from."""
         bearing = math.atan2(toward_src[1], toward_src[0])
@@ -532,6 +593,7 @@ class Sim:
         if t.hp <= 0 and t.alive:
             t.alive = False
             t.death_t = self.t
+            self.deaths.append((self.t, t.id))
             self.sounds.append((self.t, "death", tuple(t.pos), t.id))
             self._ev({"e": "death", "id": t.id, "by": src.id if src else None})
             if src:
@@ -603,15 +665,18 @@ class Sim:
         return {
             "type": "obs", "tick": self.tick, "t": round(self.t, 2),
             # a duel stands in for part of a 16-mech match: report the rest as still alive
-            "alive": self.cfg["match"]["mechs"] - sum(1 for o in self.mechs.values() if not o.alive),
+            "alive": (sum(1 for o in self.mechs.values() if o.alive) if self.zone is not None
+                      else self.cfg["match"]["mechs"] - sum(1 for o in self.mechs.values() if not o.alive)),
             "self": {"id": m.id, "pos": [round(v, 2) for v in m.pos], "vel": [round(v, 2) for v in m.vel],
                      "aim": [round(m.aim[0], 3), round(m.aim[1], 3)], "hp": round(m.hp, 1), "max_hp": round(m.max_hp),
                      "energy": round(m.energy, 1), "max_energy": m.stats["energy"], "grounded": m.grounded,
-                     "cubes": m.cubes, "upgrades": [], "weapons": weapons, "stats": dict(m.stats), "in_zone": True},
+                     "cubes": m.cubes, "upgrades": [], "weapons": weapons, "stats": dict(m.stats),
+                     "in_zone": True if self.zone is None else self.zone.inside(self.t, m.pos)},
             "mechs": mechs, "projectiles": projectiles, "crates": [], "cubes": [], "pickups": pickups,
             "sounds": sounds, "beams": [], "events": events, "drops": [],
-            "zone": {"center": [cx, cy], "radius": 560, "next_center": [cx, cy], "next_radius": 380,
-                     "shrink_start": 1e4, "shrink_end": 1e4 + 50, "dps": 20},
+            "zone": (self.zone.obs(self.t) if self.zone is not None else
+                     {"center": [cx, cy], "radius": 560, "next_center": [cx, cy], "next_radius": 380,
+                      "shrink_start": 1e4, "shrink_end": 1e4 + 50, "dps": 20}),
             "offer": None,
         }
 
@@ -691,4 +756,10 @@ def patch_brain_for_speed():
     brain.Nav = lambda w, cfg=None: fresh_nav()
     brain.gc.freeze = lambda: None
     brain.gc.collect = lambda: None
+    # Results must not depend on how busy the CPU is: A*, the cover search and the per-tick guard run on wall-clock
+    # budgets in the real bot. Give them room here so a match replays the same way for the same seed.
+    import config
+    config.NAV_BUDGET_MS = 1000.0
+    config.COVER_PAIR_BUDGET_MS = 1000.0
+    config.TICK_SOFT_LIMIT_MS = 1e6
     mf.draw.caps = base_hello()["config"]["debug"]

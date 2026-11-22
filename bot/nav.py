@@ -32,6 +32,10 @@ class Nav:
         self.hist = []  # (t, x, y) for stuck detection
         self.unstick_until = -1.0
         self.unstick_dir = (0.0, 0.0)
+        self.climb = None  # (goal cell, computed at, plan) cache for roof_step
+        self.roof_region = (None, frozenset())  # (goal cell, cells of that roof)
+        self.snap_ground = True  # A* goals snap to ground level unless we're walking a roof
+        self.reachable_roofs = {}  # goal cell -> bool; the map never changes, so compute once
         if self.ok:
             self._build()
 
@@ -122,7 +126,8 @@ class Nav:
                     if max(abs(i - i0), abs(j - j0)) != r or not (0 <= i < self.cnx and 0 <= j < self.cny):
                         continue
                     c = j * self.cnx + i
-                    if self.main[c] and not (ground_only and self.roof[c]):
+                    ok = (self.main[c] and not self.roof[c]) if ground_only else not self.Bl[c]
+                    if ok:
                         d = (i - i0) ** 2 + (j - j0) ** 2
                         if best is None or d < best[0]:
                             best = (d, i, j)
@@ -133,7 +138,7 @@ class Nav:
     # ---- A* --------------------------------------------------------------
     def _start_search(self, pos, goal):
         si, sj = self.to_cell(pos[0], pos[1])
-        gx, gy = self.nearest_walkable(goal[0], goal[1])
+        gx, gy = self.nearest_walkable(goal[0], goal[1], ground_only=self.snap_ground)
         gi, gj = self.to_cell(gx, gy)
         n = self.cnx
         s, g = sj * n + si, gj * n + gi
@@ -260,6 +265,106 @@ class Nav:
             self.unstick_until = t + config.UNSTICK_S
             return True
         return False
+
+    # ---- roofs ---------------------------------------------------------------
+    def on_roof_of(self, pos, goal):
+        """True if we're standing on the same roof as goal (x, y): our cell is in that roof's connected area."""
+        i, j = self.to_cell(pos[0], pos[1])
+        c = j * self.cnx + i
+        gi, gj = self.to_cell(goal[0], goal[1])
+        g = gj * self.cnx + gi
+        if self.roof_region[0] == g:
+            return c in self.roof_region[1] and pos[2] > self.Hl[c] - 2.0
+        return self.roof[c] and abs(pos[2] - self.Hl[g]) <= 2 * config.NAV_MAX_UP
+
+    def climb_plan(self, pos, goal):
+        """Where to climb onto the roof under goal: (base_xy on the ground, edge_xy on the roof, height m),
+        or None if goal isn't on a roof we can reach (too high, or no ground next to it)."""
+        n = self.cnx
+        gi, gj = self.to_cell(goal[0], goal[1])
+        g = gj * n + gi
+        if not self.roof[g]:
+            return None
+        Hl, roof, main = self.Hl, self.roof, self.main
+        region, q = {g}, [g]
+        while q and len(region) < config.ROOF_REGION_MAX:
+            cur = q.pop()
+            ci, cj = cur % n, cur // n
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    i, j = ci + di, cj + dj
+                    if (di or dj) and 0 <= i < n and 0 <= j < self.cny:
+                        nb = j * n + i
+                        if nb not in region and roof[nb] and abs(Hl[nb] - Hl[cur]) <= config.NAV_MAX_UP:
+                            region.add(nb)
+                            q.append(nb)
+        self.roof_region = (g, frozenset(region))
+        best = None
+        for cur in region:
+            ci, cj = cur % n, cur // n
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    if not (di or dj):
+                        continue
+                    for k in (2, 3):
+                        i, j = ci + di * k, cj + dj * k
+                        if not (0 <= i < n and 0 <= j < self.cny):
+                            break
+                        b = j * n + i
+                        if b in region:
+                            break
+                        if main[b] and not roof[b]:
+                            h = Hl[cur] - Hl[b]
+                            if 0 < h <= config.ROOF_MAX_CLIMB_M:
+                                bx, by = self.to_xy(i, j)
+                                ex, ey = self.to_xy(ci, cj)
+                                cost = math.hypot(bx - pos[0], by - pos[1]) + 0.5 * math.hypot(ex - goal[0], ey - goal[1])
+                                if best is None or cost < best[0]:
+                                    best = (cost, (bx, by), (ex, ey), h)
+                            break
+        return None if best is None else best[1:]
+
+    def roof_reachable(self, goal):
+        """Can we climb onto the roof under goal at all? Cached per cell: the map is static."""
+        gi, gj = self.to_cell(goal[0], goal[1])
+        key = gj * self.cnx + gi
+        if key not in self.reachable_roofs:
+            region = self.roof_region
+            self.reachable_roofs[key] = self.climb_plan(goal, goal) is not None
+            self.roof_region = region  # climb_plan overwrote it; keep the one roof_step is using
+        return self.reachable_roofs[key]
+
+    def roof_step(self, pos, goal, t, energy, grounded, energy_per_m=2.0):
+        """(move_x, move_y, jump, boost) toward a goal on a roof: walk to the climb point, wait for energy,
+        jump and jet up the wall, then walk across the roof. None if the roof can't be reached."""
+        x, y, z = pos
+        gi, gj = self.to_cell(goal[0], goal[1])
+        key = gj * self.cnx + gi
+        if self.climb is None or self.climb[0] != key or t - self.climb[1] > config.ROOF_REPLAN_S:
+            self.climb = (key, t, self.climb_plan(pos, goal))
+        if self.on_roof_of(pos, goal):
+            self.snap_ground = False  # path across the roof itself (internal walls, raised sections)
+            try:
+                return self.next_step(pos, (goal[0], goal[1]), t, 1.0)
+            finally:
+                self.snap_ground = True
+        plan = self.climb[2]
+        if plan is None:
+            return None
+        base, edge, height = plan
+        roof_z = self.Hl[self.to_cell(edge[0], edge[1])[1] * self.cnx + self.to_cell(edge[0], edge[1])[0]]
+        if not grounded and math.hypot(edge[0] - x, edge[1] - y) < 12:
+            # in the air at the wall: keep pushing onto the roof, jet only until the feet clear the edge
+            self.hist.clear()
+            mx, my = self._direct(x, y, edge)
+            return mx, my, False, z < roof_z + 1.5
+        if math.hypot(base[0] - x, base[1] - y) > config.ROOF_BASE_REACH_M:
+            return self.next_step(pos, base, t, 1.0)
+        self.hist.clear()  # pressing into a wall on purpose: not stuck
+        if grounded and energy < min(99.0, energy_per_m * height + config.ROOF_ENERGY_SPARE):
+            return 0.0, 0.0, False, False  # let energy refill at the foot of the wall
+        mx, my = self._direct(x, y, edge)
+        return mx, my, grounded, True
 
     def cover_pair(self, pos, threat_pos, height, allowed):
         """Find covered ground with a nearby walkable firing position.

@@ -136,8 +136,12 @@ def spawn_points(rng, nav, world, n, min_sep=130, max_sep=220):
 
 def run_duel(args):
     seed, skill, n_hunters, our_w, hunter_w, max_t, record, overrides, n_pickups, hunter_loot = args
-    S.patch_brain_for_speed()
+    # Worker processes run many jobs: start each from the defaults in bot/config.py, or one variant's
+    # overrides leak into the next (this silently mixed MODE='ffa' into later variants once).
+    import importlib
     import config
+    importlib.reload(config)
+    S.patch_brain_for_speed()
     for key, val in overrides.items():
         setattr(config, key, val)
     from main import Bot
