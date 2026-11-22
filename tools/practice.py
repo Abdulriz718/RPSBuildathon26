@@ -235,7 +235,7 @@ def run_match(args):
             "shots": ours.shots, "hits": ours.hits,
             "h_shots": sum(b.m.shots for b in bots), "h_hits": sum(b.m.hits for b in bots),
             "near_at_death": sum(1 for b in bots if b.m.alive and math.dist(b.m.pos, ours.pos) < 120),
-            "kill_log": kill_log, "ffa_t": ffa_t, "dmg_in": ours.dmg_in, "rear_in": ours.rear_in, "cubes": ours.cubes, "upgrades": list(ours.upgrades),
+            "kill_log": kill_log, "ffa_t": ffa_t, "dmg_in": ours.dmg_in, "rear_in": ours.rear_in, "drops": getattr(ours, "drops_taken", 0), "cubes": ours.cubes, "upgrades": list(ours.upgrades),
             "drones_killed": sum(1 for b in sim.npc_brains if not b["m"].alive)}
 
 
@@ -258,6 +258,7 @@ def line(label, rs, base=None):
             f" | alive at end {sum(r['alive'] for r in rs)}")
     din = sum(r.get("dmg_in", 0) for r in rs)
     out += f" | rear dmg {100 * sum(r.get('rear_in', 0) for r in rs) / max(1, din):.0f}%"
+    out += f" | drops/match {sum(r.get('drops', 0) for r in rs) / len(rs):.2f}"
     trips = sum(r.get("ffa_t") is not None for r in rs)
     if trips:
         out += f" | ffa mode in {trips}/{len(rs)}"
