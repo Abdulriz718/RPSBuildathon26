@@ -422,4 +422,14 @@ sight. Weapon pickups and drops still come first. CUBE_COLLECT also grabs kill c
 Practice sim, 48 matches (no crates in the sim): cubes at end mean 0.3 -> 2.5, drones per match 0.1 -> 0.4,
 armor upgrades 1 -> 19, score 1.83 -> 2.08. All checks and the Docker check pass.
 
-| 16 | | | #14 + FARM + CUBE_COLLECT | | |
+| 16 | | | #14 + FARM + CUBE_COLLECT | 4.10 | NEW BEST (+0.68 over 3.42); sim predicted only +0.25 |
+
+## Farm longer and past 10 cubes
+
+Lessons from #16 (4.10): power from cubes beats tactics; the sim undervalues the economy (predicted +0.25, got
++0.68), so it only checks mechanisms now; with +-0.05 noise, take bold steps along what works.
+#17: FARM_UNTIL_S 180 -> 360, FARM_CUBES 10 -> 21 (stats cap at 10 cubes, upgrade offers continue at 15 and 21).
+Sim can't see it (its bot dies around 50 s): identical matches. A flat server result would mean real matches rarely
+get past 180 s or 10 cubes.
+
+| 17 | | | #16 + FARM_UNTIL_S=360, FARM_CUBES=21 | | |
