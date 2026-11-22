@@ -577,6 +577,9 @@ class Brain:
         bearing = None
         if config.DEFENSIVE_EVASION:
             bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)
+        duel_evasion = (config.DUEL_EVASION and mech is not None
+                        and mode in ("FIGHT", "RECOVER", "AVOID")
+                        and len(self.known_attackers(t, x, y)) == 1)
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)

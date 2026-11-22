@@ -249,6 +249,20 @@ First comparison (10 matched hard two-hunter seeds): both variants won 3/10. Hun
 rate fell from 48% to 42%, while rear hits rose from 19% to 24% of damage taken. Leave the
 flag off pending a clearer win and better flank coverage.
 
+### New cycle Phase 3 — offline movement tuning
+
+Use the same arena seeds, spawn conditions, and loadouts for every candidate in
+each comparison. Rank candidates on farm-mode 16-mech placement across the
+training seeds. Evaluate the top candidate once against the default on a
+disjoint set of seeds. Advance it only if placement improves on both sets and
+holdout duel wins and zone survival stay at least level with the default.
+The evasion rate and jet energy metrics explain tradeoffs. Official practice
+still supplies the score used for submission decisions.
+
+`python tools/bench.py --tune-movement --seeds 1 5335629 --holdout-seeds 271828 7813031`
+runs the default, Phase 2 evasion, and a higher jet reserve. It selects a
+configuration for further evaluation without changing runtime configuration.
+
 Follow-up (100 matched duels per cell, A's run): off/on = hard x1 81/78, expert x1 65/61, medium x2 37/36,
 hard x2 29/29. The withdrawal triggers only 3-4% of the time. No gain: keep the flag off.
 

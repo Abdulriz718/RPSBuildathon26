@@ -124,3 +124,93 @@ def escape_move(obs, move, boost, tracks, bearing, world, nav, rules):
         if best is None or score < best[0]:
             best = (score, heading)
     return move if best is None else best[1]
+
+
+def _duel_path(me, action, world, dt):
+    mx, my, jump, boost = action
+    x, y, z = me["pos"]
+    vx, vy, vz = me["vel"]
+    stats = me["stats"]
+    grounded = me["grounded"]
+    energy = me["energy"]
+    muzzle = stats["muzzle_height"]
+    charging = any(weapon and weapon.get("charge", 0) > 0 for weapon in me.get("weapons", ()))
+    for step in range(config.EVADE_STEPS):
+        powered = boost and energy > 0
+        run = powered and grounded
+        speed = stats["boost_speed"] if run else stats["walk_speed"]
+        if charging:
+            speed *= stats["charge_move_mult"]
+        accel = stats["ground_accel"] if grounded else stats["air_accel"]
+        dx, dy = mx * speed - vx, my * speed - vy
+        scale = min(1.0, accel * dt / max(hypot(dx, dy), 1e-9))
+        vx, vy = vx + dx * scale, vy + dy * scale
+        if jump and step == 0 and grounded:
+            grounded, vz = False, stats["jump_speed"]
+        if not grounded:
+            if powered:
+                vz = min(stats["max_rise_speed"], vz + stats["jet_accel"] * dt)
+                energy -= stats["jet_drain"] * dt
+            vz -= stats["gravity"] * dt
+        elif run:
+            energy -= stats["boost_drain"] * dt
+        px, py = x + vx * dt, y + vy * dt
+        if not world.in_bounds(px, py):
+            return
+        ground = world.surface(px, py)
+        pz = z + vz * dt
+        if ground > pz + stats["step_up"]:
+            return
+        if pz <= ground:
+            pz, vz, grounded = ground, 0, True
+        elif pz - ground > stats["step_up"]:
+            grounded = False
+        if pz > z and not world.los((x, y, z + muzzle), (px, py, pz + muzzle)):
+            return
+        x, y, z = px, py, pz
+        yield x, y, z
+
+
+def duel_move(obs, action, world, rules):
+    """Change the movement command only when a safer lane beats the original."""
+    me = obs["self"]
+    shots = _shots(obs, world, rules)
+    if not shots:
+        return action
+    dt = config.EVADE_HORIZON_S / config.EVADE_STEPS
+    before = tuple(_duel_path(me, action, world, dt))
+    if len(before) != config.EVADE_STEPS:
+        return action
+    risk = _contact(before, shots, me, dt)
+    if risk == 0:
+        return action
+
+    zone = obs["zone"]
+    center, radius = zone["center"], zone["radius"]
+    limit = max(radius, dist(me["pos"][:2], center))
+    next_center = zone["next_center"]
+    next_limit = max(zone["next_radius"], dist(me["pos"][:2], next_center))
+    mx, my, jump, boost = action
+    yaw = atan2(my, mx) if mx or my else me["aim"][0]
+    vertical = [(False, False)]
+    if me["grounded"]:
+        vertical.append((True, False))
+    if me["energy"] >= config.DUEL_JET_RESERVE + me["stats"]["jet_drain"] * config.EVADE_HORIZON_S:
+        vertical.append((me["grounded"], True))
+    best = (risk, action)
+    for turn in config.DUEL_EVADE_ANGLES:
+        angle = yaw + radians(turn)
+        for leap, jet in vertical:
+            candidate = (cos(angle), sin(angle), leap, jet)
+            path = tuple(_duel_path(me, candidate, world, dt))
+            if len(path) != config.EVADE_STEPS:
+                continue
+            end = path[-1][:2]
+            if dist(end, center) > limit or dist(end, next_center) > next_limit:
+                continue
+            penalty = config.DUEL_TURN_COST * abs(turn) / 180
+            penalty += config.DUEL_JUMP_COST * leap + config.DUEL_JET_COST * jet
+            score = _contact(path, shots, me, dt) + penalty
+            if score < best[0]:
+                best = (score, candidate)
+    return best[1]
