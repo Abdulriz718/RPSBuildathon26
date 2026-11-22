@@ -31,7 +31,6 @@ from world import World  # noqa: E402
 STREAM = ROOT / "mechfight-kit" / "mechfight-kit" / "check" / "stream.jsonl.gz"
 WEAPON_KINDS = ["gun", "mortar", "laser", "lightning"]
 
-
 def base_hello():
     with gzip.open(STREAM, "rt") as f:
         hello = json.loads(f.readline())
@@ -86,6 +85,8 @@ class Mech:
         self.shots = self.hits = 0
         self.dmg_out = self.dmg_in = self.rear_in = 0.0
         self.death_t = None
+        self.jet_energy = self.jet_gain = 0.0
+        self.zone_death = False
 
     def eye_pos(self):
         return (self.pos[0], self.pos[1], self.pos[2] + self.eye)
@@ -230,7 +231,9 @@ class Sim:
         if a.get("jump") and m.grounded:
             m.vel[2] = st["jump_speed"]
             m.grounded = False
-        if boosting and not m.grounded:
+        jetting = boosting and not m.grounded
+        if jetting:
+            m.jet_energy += min(max(0, m.energy), st["jet_drain"] * dt)
             m.vel[2] = min(st["max_rise_speed"], m.vel[2] + st["jet_accel"] * dt)
             m.energy -= st["jet_drain"] * dt
             spent = True
@@ -259,6 +262,8 @@ class Sim:
             z, m.vel[2], m.grounded = g, 0.0, True
         elif m.grounded and z - g > 0.3:
             m.grounded = False  # walked off an edge
+        if jetting:
+            m.jet_gain += max(0, z - m.pos[2])
         m.pos = [x, y, z]
         # steps make noise
         if m.grounded and math.hypot(m.vel[0], m.vel[1]) > self.cfg["sound"]["step_speed"]:
@@ -563,10 +568,12 @@ class Sim:
         amt = min(amt, t.hp)
         t.hp -= amt
         t.dmg_in += amt
+        t.events.append(dict(type="damaged", amount=amt, by=None, weapon="zone", bearing=None))
         t.zone_in = getattr(t, "zone_in", 0.0) + amt
         t.last_combat = self.t
         if t.hp <= 0 and t.alive:
             t.alive = False
+            t.zone_death = True
             t.death_t = self.t
             self.deaths.append((self.t, t.id))
             self._ev({"e": "death", "id": t.id, "by": None})
