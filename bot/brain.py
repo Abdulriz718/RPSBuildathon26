@@ -87,6 +87,7 @@ class Brain:
         self.juke_t, self.seen_shots, self.target_charging = -1e9, set(), False
         self.slice = None  # (computed at, target id, target pos, hidden?, spot) for SLICE
         self.ffa_on = config.MODE == "ffa"
+        self.last_mech_hurt = -1e9  # last time a mech (not a drone or the zone) damaged us
         self.last_hurt = -1e9  # last time anything (incl. the zone) damaged us
         self.healing = False   # HEAL_BETWEEN
         self.our_kills = set()  # mech ids we killed (AUTO_FFA)
@@ -351,6 +352,43 @@ class Brain:
             if (d <= vis["near_range"] - 5 or off < math.radians(vis["fov_deg"]) / 2 - 0.1)                     and self.world.los(eye, (p[0], p[1], p[2] + 1.2)):
                 del self.loot.items[iid]
 
+    def farm_goal(self, obs):
+        """(goal_xy, target to shoot or None) for the cheapest nearby cube, drone or ground crate, or None."""
+        me = obs["self"]
+        pos = me["pos"]
+        muzzle = (pos[0], pos[1], pos[2] + me["stats"]["muzzle_height"])
+        cost = config.FARM_COST
+        best = None
+        for iid, (typ, _, p, hp) in self.loot.items.items():
+            if typ == "cube":
+                d = hdist(p, pos)
+                if d <= config.FARM_CUBE_M and abs(p[2] - pos[2]) <= 4:
+                    c = d * cost["cube"]
+                    if best is None or c < best[0]:
+                        best = (c, "cube", p, None)
+            elif typ == "crate" and p[2] - self.world.ground(p[0], p[1]) <= 3:
+                d = hdist(p, pos)
+                if d <= config.FARM_CRATE_M and self.in_safe(obs, p, config.LOOT_ZONE_FRAC):
+                    c = d * cost["crate"]
+                    if best is None or c < best[0]:
+                        best = (c, "crate", p, loot.crate_target({"id": iid, "pos": p, "hp": hp}, self.crate_dims))
+        if me["hp"] >= me["max_hp"] * config.FARM_MIN_HP:
+            for npc in self.track.targets_sorted("npc", max_age=0.3):  # listed now: a dead drone drops out
+                d = hdist(npc.pos, pos)
+                if d <= config.FARM_NPC_M and self.in_safe(obs, npc.pos, config.LOOT_ZONE_FRAC):
+                    c = d * cost["npc"]
+                    if best is None or c < best[0]:
+                        best = (c, "npc", npc.pos, npc)
+        if best is None:
+            return None
+        _, kind, p, tgt = best
+        if kind == "cube":
+            return (p[0], p[1]), None
+        aim_at = (p[0], p[1], p[2] + tgt.height / 2)
+        if hdist(p, pos) < config.FARM_SHOOT_M and self.world.los(muzzle, aim_at):
+            return (pos[0], pos[1]), tgt
+        return (p[0], p[1]), None
+
     def crate_goal(self, obs):
         """(goal_xy, crate target to shoot or None) for the nearest remembered ground crate, or None."""
         me = obs["self"]
@@ -569,7 +607,7 @@ class Brain:
         self.track.update(obs)
         self.weapons.update(obs)
         self.loot.update(obs)
-        if config.CRATE_HUNT:
+        if config.CRATE_HUNT or config.FARM:
             self.forget_broken_crates(obs)
         act = {}
 
@@ -580,6 +618,8 @@ class Brain:
                 self.our_kills.add(e["target"])
             if e["type"] == "damaged":
                 self.last_hurt = t
+                if isinstance(e.get("by"), int) and e["by"] < 100:
+                    self.last_mech_hurt = t
             if e["type"] == "damaged" and e.get("by") is not None:
                 self.hurt_by[e["by"]] = t
                 if e["by"] in self.track.targets:
@@ -639,6 +679,11 @@ class Brain:
                 and t < config.CRATE_HUNT_UNTIL_S and t - self.last_hurt >= config.CRATE_CALM_S
                 and not (visible_mech and hdist(mech.pos, (x, y)) < config.CRATE_FIGHT_M)):
             crgoal = self.crate_goal(obs)
+        fgoal = None
+        if (config.FARM and not ffa and not hurry and not self.recovering and t < config.FARM_UNTIL_S
+                and me["cubes"] < config.FARM_CUBES and t - self.last_mech_hurt >= config.FARM_CALM_S
+                and not (visible_mech and hdist(mech.pos, (x, y)) < config.FARM_FIGHT_M)):
+            fgoal = self.farm_goal(obs)
         cgoal = None if hurry else self.cube_goal(obs, hdist(target.pos, (x, y)) if target is not None else None)
         roof_goal = None
         goal = zgoal
@@ -679,6 +724,10 @@ class Brain:
                 act["take"] = wgoal[0]
                 if wgoal[2] is not None:
                     act["drop"] = wgoal[2]
+        elif fgoal is not None:
+            mode, (goal, shoot) = "FARM", fgoal
+            target = shoot
+            stand = shoot is not None
         elif crgoal is not None:
             mode, (goal, shoot) = "CRATE", crgoal
             target = shoot
@@ -786,7 +835,7 @@ class Brain:
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
-        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE") or (mode != "ZONE" and (ffa or late)):
+        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE", "FARM") or (mode != "ZONE" and (ffa or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge

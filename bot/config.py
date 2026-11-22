@@ -103,7 +103,7 @@ LOOT_UNTIL_S = 150        # actively route to loot before this match time
 LOOT_RADIUS = 90          # only detour this far for loot
 LOOT_ZONE_FRAC = 0.9      # loot must lie within this fraction of the next zone radius
 CRATE_SHOOT_M = 60        # stop and shoot crates from this range
-NPC_FARM_M = 0            # attack NPC drones closer than this when no mech is around (was 70; #15 tests 0)
+NPC_FARM_M = 70           # attack NPC drones closer than this when no mech is around (0 scored 3.13 in #15: farming matters)
 NPC_FARM_HP = 0.7         # ... and our HP is above this fraction
 LOOT_FORGET_M = 20        # forget remembered loot when this close and it isn't listed
 
@@ -182,6 +182,20 @@ SLICE_RANGE_COST = 0.6
 # Laser peek-charging (needs SLICE): while the laser charges and isn't full, move to the hidden spot; step out to fire.
 SLICE_LASER_PEEK = False
 
+# Farm-first (brain.py FARM mode): early on, snowball cubes (+4% HP and damage each, upgrades at 1/3/6/10).
+# Server: dropping drone farming cost -0.27 (#15), so farming pays on the real server.
+FARM = True
+FARM_UNTIL_S = 180         # farm before this match time...
+FARM_CUBES = 10            # ...while we hold fewer cubes than this (stat cap)
+FARM_FIGHT_M = 90          # a visible mech closer than this takes priority
+FARM_CALM_S = 2.0          # ...as does a mech that hit us this recently
+FARM_MIN_HP = 0.35         # don't start on drones below this HP fraction
+FARM_CUBE_M = 90           # walk this far for a cube
+FARM_NPC_M = 150           # ...for a drone (2 cubes)
+FARM_CRATE_M = 120         # ...for a ground crate (1 cube)
+FARM_SHOOT_M = 60          # stand and shoot drones/crates from this range (with line of sight)
+FARM_COST = {"cube": 0.5, "npc": 0.8, "crate": 1.0}  # metres-of-walk multiplier per kind (lower = preferred)
+
 # Awareness (brain.py). The server keeps reporting a mech's real position for vision.memory_s (5 s) after it
 # leaves view; these cover what happens after that, plus where the torso looks.
 THREAT_MEMORY = True       # keep enemy tracks THREAT_MEMORY_S; with nobody in view, face the newest lost one
@@ -226,7 +240,7 @@ ROOF_ENERGY_SPARE = 15     # energy to keep beyond the climb itself
 ROOF_REPLAN_S = 5.0
 
 # Cube collection (brain.py CUBES mode). Each cube: +4% max HP and damage (cap 10); kills drop victim cubes + 2.
-CUBE_COLLECT = False   # added after 3.40, was on in #9-#12; practice sim: no gain
+CUBE_COLLECT = True    # on with FARM (kills drop the victim's cubes + 2); was off in #13-#15
 CUBE_MAX_M = 50            # walk this far for a cube when nobody is close
 CUBE_SAFE_M = 60           # "nobody close" = our target is farther than this
 CUBE_FIGHT_M = 12          # mid-fight, still grab cubes this close

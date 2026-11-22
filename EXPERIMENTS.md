@@ -408,4 +408,18 @@ Plan: one setting per submission on the server, keep what goes up. Sim (96 paire
 no drone farming +0.09 +-0.05, laser detour bonus 120 m +0.05 +-0.04, strafe flip 1.8 s +0.05 +-0.10;
 aim tolerance 1.6 / 2.0, weapon swap 80 m, zone margin 0.9 and full-speed dodge were flat or worse.
 
-| 15 | | | #14 + NPC_FARM_M=0 (no drone farming) | | |
+| 15 | | | #14 + NPC_FARM_M=0 (no drone farming) | 3.13 | real loss (-0.27): drone farming helps on the server; reverted |
+
+## Farm-first snowball (`FARM`, brain.py FARM mode) + `CUBE_COLLECT` back on
+
+Evidence: #15 (no drone farming) lost 0.27 on the server; the real 16-bot replay winner farmed a drone at 14 s,
+crates, a drop and 16 cubes. Each cube is +4% HP and damage (cap 10); upgrade offers at 1/3/6/10 cubes.
+
+FARM: before 180 s and below 10 cubes, with no mech within 90 m and no mech hit on us for 2 s: go for the cheapest
+cube (90 m), drone (150 m, listed now, HP above 35%) or ground crate (120 m), stand and shoot from 60 m with line of
+sight. Weapon pickups and drops still come first. CUBE_COLLECT also grabs kill cubes mid-fight within 12 m.
+
+Practice sim, 48 matches (no crates in the sim): cubes at end mean 0.3 -> 2.5, drones per match 0.1 -> 0.4,
+armor upgrades 1 -> 19, score 1.83 -> 2.08. All checks and the Docker check pass.
+
+| 16 | | | #14 + FARM + CUBE_COLLECT | | |
