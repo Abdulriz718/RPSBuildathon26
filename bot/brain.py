@@ -15,6 +15,7 @@ Firing and dodging come from combat.Weapons (Sahan); legs and modes live here.
 """
 import gc
 import math
+import time
 
 import combat
 import config
@@ -80,6 +81,7 @@ class Brain:
         self.style_boost = False
         self.roof_spot = None  # (computed at, (x, y, z)) for STYLE "roof"
         self.anchor = None  # (circle, refresh time, position)
+        self.slice = None  # (computed at, target id, target pos, hidden?, spot) for SLICE
         self.ffa_on = config.MODE == "ffa"
         self.last_hurt = -1e9  # last time anything (incl. the zone) damaged us
         self.healing = False   # HEAL_BETWEEN
@@ -445,6 +447,76 @@ class Brain:
         self.pair = (hide, peek, t, target.id, tp)
         return pair
 
+    def slice_spot(self, obs, target, t, hidden):
+        """Best nearby ground spot to fight target from (hidden=False) or to hide from everyone (hidden=True)."""
+        me = obs["self"]
+        x, y, z = me["pos"]
+        tp = target.predict(0)
+        c = self.slice
+        if (c is not None and t - c[0] < config.SLICE_REPLAN_S and c[1] == target.id and c[3] == hidden
+                and hdist(tp, c[2]) < config.COVER_TARGET_MOVE_M):
+            return c[4]
+        deadline = time.perf_counter() + config.SLICE_BUDGET_MS / 1000.0
+        w, mh = self.world, me["stats"]["muzzle_height"]
+        tcenter = (tp[0], tp[1], tp[2] + target.height / 2)
+        teye = (tp[0], tp[1], tp[2] + 8.0)
+        others = []
+        for e in self.track.targets_sorted("mech", max_age=config.SLICE_ENEMY_AGE_S):
+            if e.id != target.id and len(others) < config.SLICE_MAX_OTHERS:
+                ep = tuple(p + v * min(e.age, 1.0) for p, v in zip(e.pos, e.vel))
+                others.append((ep[0], ep[1], ep[2] + 8.0))
+        watchers = others + ([teye] if hidden else [])
+        lo, hi = config.SLICE_RANGE_M
+        me_mid = (x, y, z + 2.0)
+        cands = [(x, y)] + [(x + r * math.cos(a), y + r * math.sin(a))
+                            for r in config.SLICE_RADII_M
+                            for a in (2 * math.pi * k / config.SLICE_ANGLES for k in range(config.SLICE_ANGLES))]
+        scored = []
+        for i, (px, py) in enumerate(cands):
+            if time.perf_counter() > deadline:
+                break
+            if i and not (w.in_bounds(px, py) and loot.in_next_zone(obs["zone"], (px, py))
+                          and self.nav.walkable_xy(px, py)):
+                continue
+            pz = w.surface(px, py)
+            if i and (abs(pz - z) > config.NAV_MAX_UP or not w.los(me_mid, (px, py, pz + 2.0))):
+                continue
+            muzzle, chest = (px, py, pz + mh), (px, py, pz + 6.0)
+            seen = sum(1 for e in watchers if w.los(e, chest))
+            travel = math.hypot(px - x, py - y)
+            score = -config.SLICE_CROSSFIRE * seen - config.SLICE_TRAVEL * travel + (config.SLICE_STAY if not i else 0.0)
+            if not hidden:
+                d = hdist(tp, (px, py))
+                if not w.los(muzzle, tcenter):
+                    score -= config.SLICE_NO_SHOT
+                score += config.SLICE_HEIGHT * max(0.0, min(6.0, pz - tp[2]))
+                score -= config.SLICE_RANGE_COST * (max(0.0, d - hi) + max(0.0, lo - d))
+            scored.append((score, px, py, pz))
+        scored.sort(reverse=True)
+        best = None
+        for score, px, py, pz in scored[:4]:  # cover bonus (attack) / peek bonus (hiding) for the leaders
+            near = False
+            for k in range(4):
+                if time.perf_counter() > deadline:
+                    break
+                a = k * math.pi / 2
+                qx, qy = px + config.SLICE_COVER_STEP_M * math.cos(a), py + config.SLICE_COVER_STEP_M * math.sin(a)
+                if not self.nav.walkable_xy(qx, qy):
+                    continue
+                qz = w.surface(qx, qy)
+                if hidden:
+                    near = w.los((qx, qy, qz + mh), tcenter)
+                else:
+                    near = not w.los(teye, (qx, qy, qz + 6.0))
+                if near:
+                    break
+            score += config.SLICE_COVER if near else 0.0
+            if best is None or score > best[0]:
+                best = (score, (px, py))
+        spot = best[1] if best else None
+        self.slice = (t, target.id, tp, hidden, spot)
+        return spot
+
     def hidden_from(self, me, threat):
         p = me["pos"]
         eye = (threat.pos[0], threat.pos[1], threat.pos[2] + 8.0)
@@ -599,8 +671,18 @@ class Brain:
             pair = None if style_move is not None else self.fight_spot(obs, target, t)
             reloading = any(w and w["kind"] == "gun" and (w["reload"] > 0 or w["ammo"] == 0)
                             for w in me["weapons"])
+            laser_charging = any(w and w["kind"] == "laser" and 0 < w.get("charge", 0) < w["stats"]["charge"]
+                                 for w in me["weapons"])
+            duck = reloading or (config.SLICE_LASER_PEEK and laser_charging)
+            spot = (self.slice_spot(obs, target, t, duck)
+                    if config.SLICE and style_move is None and not ffa else None)
+            if spot is not None and hdist(spot, (x, y)) < config.SLICE_MOVE_MIN_M:
+                spot = None  # current spot is best: keep the usual peek/strafe instead of standing still
             if style_move is not None:
                 move = style_move
+            elif spot is not None:
+                goal, precise = spot, True
+                hide = reloading  # (a charging laser keeps its trigger held: combat.decide holds it out of sight)
             elif pair is not None:
                 goal, precise = (pair[0] if reloading else pair[1]), True
                 hide = reloading

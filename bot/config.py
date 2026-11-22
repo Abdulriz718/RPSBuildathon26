@@ -159,6 +159,29 @@ CRATE_HUNT_M = 200         # walk this far for a crate
 CRATE_FIGHT_M = 100        # a visible mech closer than this takes priority
 CRATE_CALM_S = 2.0         # ...as does anything that hit us this recently
 
+# Fight position scoring (brain.py slice_spot), replaces the cover hide/peek pair in FIGHT. Every SLICE_REPLAN_S,
+# score ~37 nearby ground spots: see the target, don't be seen by the other known enemies (crossfire), cover close
+# by, height, little travel, sensible range. While reloading: be hidden from every known enemy instead.
+SLICE = False
+SLICE_RADII_M = (5, 10, 16)
+SLICE_ANGLES = 12
+SLICE_REPLAN_S = 0.3
+SLICE_BUDGET_MS = 5.0      # stop scoring candidates after this (nearest are scored first)
+SLICE_ENEMY_AGE_S = 5.0    # enemies seen this recently count for crossfire
+SLICE_MAX_OTHERS = 3       # check sight lines from at most this many other enemies
+SLICE_NO_SHOT = 100.0      # attack spot without line of sight to the target
+SLICE_CROSSFIRE = 150.0    # per other enemy that can see the spot (per enemy at all when hiding)
+SLICE_COVER = 30.0         # a spot hidden from the target within SLICE_COVER_STEP_M
+SLICE_COVER_STEP_M = 4.0
+SLICE_HEIGHT = 1.5         # per metre above the target (up to 6 m)
+SLICE_TRAVEL = 1.0         # per metre of travel
+SLICE_STAY = 20.0          # bonus for staying put: relocate only for a clearly better spot
+SLICE_MOVE_MIN_M = 2.0     # a best spot closer than this = stay: keep the usual cover peek / strafe
+SLICE_RANGE_M = (25, 130)  # outside this target range: penalty per metre
+SLICE_RANGE_COST = 0.6
+# Laser peek-charging (needs SLICE): while the laser charges and isn't full, move to the hidden spot; step out to fire.
+SLICE_LASER_PEEK = False
+
 # Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
 WEAPON_GRAB = True
 WEAPON_RANK = {"mortar": 1, "lightning": 2, "laser": 3}   # swap up only to a higher rank
