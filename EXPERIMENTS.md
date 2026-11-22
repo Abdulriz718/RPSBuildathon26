@@ -479,4 +479,15 @@ Practice sim, 48 (mechanism only): kills 2.1 -> 1.6, median death 50 -> 54 s, de
 Reading the server score: near 0-2 = real hunters find and kill a passive bot (go offense-first);
 about 4 = no change; 6+ = survival works, go all in on hiding and HP.
 
-| 19 | | | #18 + SURVIVE (never start fights) | | |
+| 19 | | | #18 + SURVIVE (never start fights) | 3.29 | real loss (-0.81): passive play loses kills and does not survive to the end; off |
+
+## Offense-first (`OFFENSE_FIRST`, `COMBINED_FIRE`)
+
+After #19: kills are what count. Upgrades now go damage first: gun_mag (+8 rounds, reload x0.8 = +31% sustained gun
+fire), laser damage/charge, gun_rate, gun_damage, lightning/mortar damage; armor and plating last.
+COMBINED_FIRE back on: the gun keeps firing alongside laser/lightning. SURVIVE and roof crates off again, so the
+base is #17 (4.06/4.10).
+
+Practice sim, 48 (mechanism): upgrades taken gun_mag 13, gun_rate 11, gun_damage 6, armor 5; score 2.06 (base ~2.08).
+
+| 20 | | | #17 + OFFENSE_FIRST upgrades + COMBINED_FIRE | | |
