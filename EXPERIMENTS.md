@@ -490,4 +490,14 @@ base is #17 (4.06/4.10).
 
 Practice sim, 48 (mechanism): upgrades taken gun_mag 13, gun_rate 11, gun_damage 6, armor 5; score 2.06 (base ~2.08).
 
-| 20 | | | #17 + OFFENSE_FIRST upgrades + COMBINED_FIRE | | |
+| 20 | | | #17 + OFFENSE_FIRST upgrades + COMBINED_FIRE | 4.10 | flat: upgrade order and combined fire do not matter |
+
+## Lightning brawler probe (`LIGHTNING_FIRST`)
+
+Weapon rank flipped to lightning > laser > mortar (detour bonus lightning 70 m, laser 30 m), and while holding
+lightning (range 45 m, never misses inside its cone) the bot closes to 30 m with boosts, then strafes (rush movement).
+Why: the real 16-bot replay winner was a lightning brawler; the sim's weapon model is a guess.
+Sim, 48 (mechanism): lightning held 22/48 (was ~11), laser 11 (was ~21); score 1.85 (#20 ~2.06).
+Note: WEAPON_RANK/BONUS are computed at import, so `--set LIGHTNING_FIRST=False` does not switch them back.
+
+| 21 | | | #20 + LIGHTNING_FIRST (lightning > laser, brawl at 30 m with lightning) | | |

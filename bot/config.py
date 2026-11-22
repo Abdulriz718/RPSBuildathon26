@@ -232,8 +232,12 @@ JUKE_NEAR_M = 15.0         # a new bullet this close to the target = it just fir
 
 # Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
 WEAPON_GRAB = True
-WEAPON_RANK = {"mortar": 1, "lightning": 2, "laser": 3}   # swap up only to a higher rank
-WEAPON_BONUS = {"laser": 70, "lightning": 30, "mortar": 0}  # metres of detour each kind is worth
+LIGHTNING_FIRST = True     # #21 probe: chase lightning over laser and brawl in its range (real FFA winner: lightning)
+WEAPON_RANK = ({"mortar": 1, "laser": 2, "lightning": 3} if LIGHTNING_FIRST
+               else {"mortar": 1, "lightning": 2, "laser": 3})   # swap up only to a higher rank
+WEAPON_BONUS = ({"lightning": 70, "laser": 30, "mortar": 0} if LIGHTNING_FIRST
+                else {"laser": 70, "lightning": 30, "mortar": 0})  # metres of detour each kind is worth
+LIGHTNING_BRAWL_M = 30     # holding lightning (range 45): close to this range with boosts, then strafe (rush style)
 WEAPON_MAX_M = 150         # fetch a first weapon up to this far
 WEAPON_SWAP_M = 45         # swap to a better weapon only this close
 WEAPON_FIGHT_M = 80        # with a visible mech closer than this...
