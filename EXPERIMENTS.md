@@ -105,3 +105,28 @@ gun+lightning 31, gun+mortar 7, gun only 6.
 
 Conclusion: in the sim, 1-vs-2 is a damage race. Positioning and target choice don't move it; holding a laser does
 (58% vs 6%). Code for the tries above was removed; only the diagnostics stay.
+
+| 8 | | | #7 behaviour + ROOF_CLIMB (jet onto roofs for roof weapons; 96% of test climbs succeed). Survival gameplans added but OFF | | |
+
+## Survival gameplans (Abdul's tips) in the free-for-all sim (`tools/ffa.py`, 16 mechs, house-bot skill mix, 240 paired seeds)
+
+| variant | vs baseline | died 13th-16th (of 240) |
+|---|---|---|
+| baseline (farm mode, roofs on) | 10.73 | 42 |
+| `MODE='ffa'`: only fight attackers or weak lone targets, avoid the rest | **+1.05 +-0.31** | 29 |
+| ffa + hold near zone edge (`ZONE_MARGIN=0.92`) | +1.10 +-0.30 | 25 |
+| hold near zone edge alone | +0.06 +-0.14 | 39 |
+| `AVOID_FIGHT_SOUNDS`: hold away from fights heard/seen | -0.12 +-0.12 | 44 |
+| `MULTI_DISENGAGE`: back off when 2+ attackers | -0.01 +-0.12 | 35 |
+| roof climbing off | -0.01 +-0.07 | 42 |
+
+Practice-style duels (hunters chase us, 120 each, hard x1 / hard x2): baseline 80/30, AVOID_FIGHT_SOUNDS 79/30,
+MULTI_DISENGAGE 79/31, `MODE='ffa'` 69/14 (hurts practice), roof on vs off 61/30 vs 61/27 (expert x1 / hard x2).
+
+So: `ffa` mode is the one survival plan that works, and only in a real free-for-all. Next: detect FFA during the match
+(other mechs damaging each other never happens in practice) and switch to it automatically.
+
+Sim fixes this round (earlier numbers were wrong): (1) worker processes kept one variant's config overrides for the
+next variant, so everything after `MODE='ffa'` in a comparison silently ran in ffa mode; now each job reloads
+`bot/config.py`. (2) A*, cover search and the tick guard ran on wall-clock budgets, so results depended on CPU load;
+the sim now gives them room, and a repeated seed reproduces exactly.

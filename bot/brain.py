@@ -73,6 +73,7 @@ class Brain:
         self.recovering = False
         self.threat = None  # last mech that hurt us or that we fought
         self.hurt_by = {}  # mech id -> last time it damaged us
+        self.danger = []  # (time, world bearing) of fights we heard or saw that weren't aimed at us
         self.anchor = None  # (circle, refresh time, position)
         # The map and nav grids are big and live all match: move them out of the GC's scans
         # so a collection can't stall a tick.
@@ -146,6 +147,51 @@ class Brain:
         anchor = center if best is None else best[1]
         self.anchor = (key, now + config.LATE_ANCHOR_REFRESH_S, anchor)
         return anchor
+
+    def note_danger(self, obs, t):
+        """Remember where fights are happening that don't involve us: combat sounds we heard, and mechs we see
+        firing at someone else. Sounds don't say who fired, so skip them while we're trading shots ourselves."""
+        x, y = obs["self"]["pos"][0], obs["self"]["pos"][1]
+        if t - self.last_exchange > 2.0:
+            for snd in obs["sounds"]:
+                if snd["kind"] in config.DANGER_SOUNDS and snd["dist"] in config.DANGER_SOUND_DISTS:
+                    self.danger.append((t - snd["age"], snd["bearing"]))
+        for m in obs["mechs"]:
+            aim = m.get("aim")
+            if m.get("kind") != "mech" or aim is None or t - self.hurt_by.get(m["id"], -1e9) < 3.0:
+                continue
+            to_us = math.atan2(y - m["pos"][1], x - m["pos"][0])
+            if abs((aim[0] - to_us + math.pi) % (2 * math.pi) - math.pi) > math.radians(30):
+                if m.get("charging") or any(e for e in obs["beams"] if e.get("by") == m["id"]):
+                    self.danger.append((t, math.atan2(m["pos"][1] - y, m["pos"][0] - x)))
+        self.danger = [d for d in self.danger if t - d[0] <= config.DANGER_MEMORY_S][-32:]
+
+    def away_from_danger(self, obs, goal):
+        """Shift a holding goal away from recent fights, staying inside the next circle."""
+        if not config.AVOID_FIGHT_SOUNDS or not self.danger:
+            return goal
+        me = obs["self"]
+        x, y = me["pos"][0], me["pos"][1]
+        ax = -sum(math.cos(b) for _, b in self.danger)
+        ay = -sum(math.sin(b) for _, b in self.danger)
+        n = math.hypot(ax, ay)
+        if n < 1e-6:
+            return goal
+        gx, gy = x + ax / n * config.DANGER_STEP_M, y + ay / n * config.DANGER_STEP_M
+        z = obs["zone"]
+        cx, cy, r = z["next_center"][0], z["next_center"][1], z["next_radius"] * config.DANGER_ZONE_FRAC
+        d = math.hypot(gx - cx, gy - cy)
+        if d > r and d > 0:
+            gx, gy = cx + (gx - cx) / d * r, cy + (gy - cy) / d * r
+        if not self.nav.walkable_xy(gx, gy):
+            gx, gy = self.nav.nearest_walkable(gx, gy)
+        return gx, gy
+
+    def known_attackers(self, t, x, y):
+        """Mech ids we can place as threats now: tracked within 120 m, or hit us in the last 2 s."""
+        ids = {m.id for m in self.track.targets_sorted("mech", max_age=2.0) if hdist(m.pos, (x, y)) < 120}
+        ids |= {mid for mid, ht in self.hurt_by.items() if t - ht <= 2.0}
+        return ids
 
     def in_safe(self, obs, p, frac=1.0):
         z = obs["zone"]
@@ -235,15 +281,18 @@ class Brain:
                 continue
             if config.WEAPON_RANK[kind] <= have:
                 continue
-            if p[2] - self.world.ground(p[0], p[1]) > 3:
-                continue  # roof: needs jet navigation
+            on_roof = p[2] - self.world.ground(p[0], p[1]) > 3
+            if on_roof and not config.ROOF_CLIMB:
+                continue
             d = hdist(p, pos)
             limit = config.WEAPON_MAX_M if slot1 is None else config.WEAPON_SWAP_M
             if d > limit:
                 continue
             if mech_d is not None and mech_d < config.WEAPON_FIGHT_M and d > config.WEAPON_GRAB_IN_FIGHT_M:
                 continue  # someone is on us: only grab it if it's right here
-            score = d - config.WEAPON_BONUS.get(kind, 0)
+            score = d - config.WEAPON_BONUS.get(kind, 0) + (config.ROOF_COST_M if on_roof else 0)
+            if on_roof and not self.nav.roof_reachable(p) and not self.nav.on_roof_of(pos, p):
+                continue
             if best is None or score < best[0]:
                 best = (score, iid, p)
         if best is None:
@@ -331,6 +380,9 @@ class Brain:
                 if e["by"] in self.track.targets:
                     self.threat = self.track.targets[e["by"]]
 
+        if config.AVOID_FIGHT_SOUNDS:
+            self.note_danger(obs, t)
+
         late = config.ENDGAME and (obs["alive"] <= config.ENDGAME_ALIVE or t >= config.ENDGAME_T)
         low = config.ENDGAME_LOW_HP if late else config.COVER_LOW_HP
         hp_frac = me["hp"] / max(1.0, me["max_hp"])
@@ -368,6 +420,7 @@ class Brain:
                 target = threat
 
         wgoal = None if hurry or self.recovering else self.weapon_goal(obs, mech)
+        roof_goal = None
         goal = zgoal
         stand = hide = False
         move = None  # direct move override (strafe)
@@ -392,10 +445,17 @@ class Brain:
             stand = all(self.hidden_from(me, enemy) for enemy in close_enemies)
         elif wgoal is not None:
             mode, goal = "WEAPON", (wgoal[1][0], wgoal[1][1])
+            if wgoal[1][2] - self.world.ground(wgoal[1][0], wgoal[1][1]) > 3:
+                roof_goal = wgoal[1]
             if hdist(wgoal[1], (x, y)) <= self.reach - 0.5 and abs(wgoal[1][2] - z) <= 4:
                 act["take"] = wgoal[0]
                 if wgoal[2] is not None:
                     act["drop"] = wgoal[2]
+        elif (config.MULTI_DISENGAGE and target is not None and len(self.known_attackers(t, x, y)) >= 2
+              and not (target.hp is not None and target.hp < config.MULTI_FINISH_HP)):
+            mode = "DISENGAGE"
+            goal = self.retreat_goal(obs, target, t)
+            stand = self.hidden_from(me, target)
         elif target is not None:
             mode = "FIGHT"
             pair = self.fight_spot(obs, target, t)
@@ -413,6 +473,7 @@ class Brain:
             target = None
         else:
             mode = "HOLD"
+            goal = self.away_from_danger(obs, goal)
             if (t < config.LOOT_UNTIL_S and not late and not self.recovering
                     and t - self.last_exchange > 3.0):
                 npc = None if ffa else self.pick_npc(me)
@@ -427,8 +488,13 @@ class Brain:
         self.mode = mode
 
         # legs
+        roof = None
+        if roof_goal is not None:
+            roof = self.nav.roof_step(me["pos"], roof_goal, t, me["energy"], me["grounded"])
         if move is not None:
             mx, my, jump, boost = move[0], move[1], False, False
+        elif roof is not None:
+            mx, my, jump, boost = roof
         else:
             reach = config.COVER_REACHED_M if precise else 2.0
             if tiny_zone and mode in ("ZONE", "HOLD"):
@@ -437,7 +503,7 @@ class Brain:
             mx, my, jump, boost = self.nav.next_step(me["pos"], goal, t, 1.0 if far else 0.0, precise=precise)
             if not far:
                 mx = my = 0.0
-            boost = boost or (mode == "ZONE" and far) or (mode in ("RECOVER", "AVOID") and far and me["energy"] > 30)
+            boost = boost or (mode == "ZONE" and far) or (mode in ("RECOVER", "AVOID", "DISENGAGE") and far and me["energy"] > 30)
         bearing = None
         if config.DEFENSIVE_EVASION:
             bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)

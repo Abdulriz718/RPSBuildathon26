@@ -141,3 +141,22 @@ WEAPON_SWAP_M = 45         # swap to a better weapon only this close
 WEAPON_FIGHT_M = 80        # with a visible mech closer than this...
 WEAPON_GRAB_IN_FIGHT_M = 20  # ...only fetch weapons within this
 SWEEP_FOR_WEAPONS = True   # turn the torso while walking until we hold a 2nd weapon
+
+# Survival gameplans (brain.py). Off until they win in tools/ffa.py and tools/duel.py.
+AVOID_FIGHT_SOUNDS = False  # hold away from fights we hear/see that aren't aimed at us
+DANGER_SOUNDS = frozenset({"gun", "mortar", "explosion", "laser", "laser_charge", "lightning"})
+DANGER_SOUND_DISTS = ("near", "mid")   # "near" < 60 m, "mid" < 160 m
+DANGER_MEMORY_S = 6.0
+DANGER_STEP_M = 40         # hold this far from where we are, away from the fights
+DANGER_ZONE_FRAC = 0.85    # ...but inside this fraction of the next circle
+MULTI_DISENGAGE = False    # back off to cover when 2+ attackers are on us
+MULTI_FINISH_HP = 400      # ...unless our target is this close to dead
+
+# Roof climbing (nav.py roof_step): reach weapons on roofs (a quarter of floor loot).
+ROOF_CLIMB = True
+ROOF_COST_M = 25           # a roof weapon counts as this much further away
+ROOF_MAX_CLIMB_M = 50      # tallest wall we try (100 energy ~ 60 m)
+ROOF_REGION_MAX = 4000     # cells searched per roof
+ROOF_BASE_REACH_M = 4.0    # start the climb this close to the climb point
+ROOF_ENERGY_SPARE = 15     # energy to keep beyond the climb itself
+ROOF_REPLAN_S = 5.0
