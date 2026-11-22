@@ -438,6 +438,37 @@ class Brain:
         self.seek = None
         return None
 
+    def camp_goal(self, obs):
+        """DROP_CAMP: a waiting spot DROP_CAMP_R from the nearest called (not landed) drop we can reach in time."""
+        me = obs["self"]
+        x, y = me["pos"][0], me["pos"][1]
+        zone = obs["zone"]
+        speed = max(1.0, me["stats"].get("boost_speed", 19.5))
+        tracks = self.track.targets_sorted("mech", max_age=config.DROP_TRACK_S)
+        best = None
+        for d in obs["drops"]:
+            if d["holder"] is not None or d["lands_in"] <= 0:
+                continue
+            px, py = d["pos"][0], d["pos"][1]
+            dist = math.hypot(px - x, py - y)
+            if (dist > config.DROP_MAX_M or dist / speed + config.DROP_CAMP_SPARE_S > d["lands_in"]
+                    or math.hypot(px - zone["next_center"][0], py - zone["next_center"][1])
+                    + config.DROP_ZONE_BUFFER_M > zone["next_radius"]):
+                continue
+            if any(hdist(tr.predict(0), (px, py)) <= config.DROP_CLEAR_M for tr in tracks):
+                continue
+            if best is None or dist < best[0]:
+                best = (dist, px, py)
+        if best is None:
+            return None
+        dist, px, py = best
+        if dist <= config.DROP_CAMP_R:
+            return (x, y)  # already close: hold here
+        k = config.DROP_CAMP_R / dist
+        wx, wy = px + (x - px) * k, py + (y - py) * k
+        spot = self.nav.nearest_walkable(wx, wy)
+        return spot if spot is not None else (wx, wy)
+
     def crate_goal(self, obs):
         """(goal_xy, crate target to shoot or None) for the nearest remembered ground crate, or None."""
         me = obs["self"]
@@ -718,6 +749,9 @@ class Brain:
         else:
             busy = visible_mech
         dgoal = None if (busy and not self.recovering and not heal_run) or hurry else self.drop_goal(obs)
+        camp = None
+        if config.DROP_CAMP and dgoal is None and not hurry and not busy and not self.ffa_on:
+            camp = self.camp_goal(obs)
         defensive_tracks = (self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S)
                             if config.DEFENSIVE_EVASION else [])
         close_enemies = [enemy for enemy in defensive_tracks if not enemy.age
@@ -793,6 +827,9 @@ class Brain:
                 act["take"] = wgoal[0]
                 if wgoal[2] is not None:
                     act["drop"] = wgoal[2]
+        elif camp is not None:
+            mode, goal = "CAMP", camp
+            stand = hdist(camp, (x, y)) < 3.0
         elif fgoal is not None and fgoal[1] == "seek":
             mode, goal = "SEEK", fgoal[0]
         elif fgoal is not None:
@@ -897,7 +934,8 @@ class Brain:
             if not far:
                 mx = my = 0.0
             boost = boost or (mode == "ZONE" and far) or (
-                config.DROP_RUSH and mode == "DROP" and hdist(goal, (x, y)) > config.DROP_BOOST_M and me["energy"] > 20) or (mode in ("RECOVER", "AVOID", "DISENGAGE", "HEAL") and far and me["energy"] > 30)
+                config.DROP_RUSH and mode in ("DROP", "CAMP") and hdist(goal, (x, y)) > config.DROP_BOOST_M
+                and me["energy"] > 20) or (mode in ("RECOVER", "AVOID", "DISENGAGE", "HEAL") and far and me["energy"] > 30)
         bearing = None
         if config.DEFENSIVE_EVASION:
             bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)
@@ -907,7 +945,7 @@ class Brain:
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
-        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE", "FARM", "SEEK") or (mode != "ZONE" and (passive or late)):
+        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE", "FARM", "SEEK", "CAMP") or (mode != "ZONE" and (passive or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge
