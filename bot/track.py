@@ -33,6 +33,8 @@ class Tracker:
         self.me_pos = (0.0, 0.0, 0.0)
         self.now = 0.0
         self.memory_s = rules["vision"]["memory_s"]
+        if config.THREAT_MEMORY:  # keep lost tracks longer than the server does (only explicit max_age reads use it)
+            self.memory_s = max(self.memory_s, config.THREAT_MEMORY_S)
         self.mech = rules["mech"]
         self.npc = rules["npc"]
         self.size_per_cube = rules["cubes"]["size_per_cube"]

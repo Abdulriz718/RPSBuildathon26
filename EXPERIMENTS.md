@@ -372,3 +372,30 @@ Mechanism check (12 practice-sim matches, share of FIGHT ticks where 2+ hunters 
 It didn't reduce crossfire. In half of the crossfire ticks the bot had never seen the second hunter (outside the
 120-degree view), so no scoring can avoid it. v1 also stood still 74% of fight ticks, which made it easier to hit.
 Left off; not submitted.
+
+## Awareness: threat memory, always-on scanning, strafe jitter
+
+Note: the server already reports a mech's real position for `vision.memory_s` (5 s) after it leaves view, so the
+bot never "forgot" an enemy after 0.75 s; it kept fighting it for 5 s. These flags cover the time after that.
+
+- `THREAT_MEMORY`: keep tracks 12 s. With nobody in view, face the newest lost enemy's predicted position
+  (velocity, capped at 2 s) and hold the zone spot (WATCH mode) instead of farming drones or looting.
+- `SCAN_ALWAYS`: sweep the torso whenever there's no target (3.40 swept only until it had a 2nd weapon); in a fight,
+  look around while hidden in cover with more than 1.2 s of gun reload left and nothing else to fire.
+- `STRAFE_JITTER`: random strafe flips in 0.6-1.4 s (was fixed 1.3 s), plus a flip when the target fires at us.
+
+Mechanism screen, practice sim, 48 paired (rear dmg = share of damage taken in the rear arc, x1.5 damage):
+
+| variant | vs base | hunters' hit% on us | rear dmg |
+|---|---|---|---|
+| base | - | 32 | 21% |
+| THREAT_MEMORY | +0.02 +-0.06 | 33 | 19% |
+| SCAN_ALWAYS | +0.00 +-0.08 | 30 | 19% |
+| STRAFE_JITTER | -0.06 +-0.10 | 34 | 24% |
+| jitter, random intervals only | -0.08 +-0.10 | 34 | 23% |
+| all three | +0.02 +-0.13 | 31 | 21% |
+
+Jitter makes us easier to hit (flipping more often than every 1.3 s means less net sideways speed): off.
+Memory + scanning are on for the next submission. Flags off still plays 24/24 identical to the 3.40 build.
+
+| 14 | | | 3.40 behaviour + THREAT_MEMORY + SCAN_ALWAYS | | |

@@ -15,6 +15,7 @@ Firing and dodging come from combat.Weapons (Sahan); legs and modes live here.
 """
 import gc
 import math
+import random
 import time
 
 import combat
@@ -81,6 +82,9 @@ class Brain:
         self.style_boost = False
         self.roof_spot = None  # (computed at, (x, y, z)) for STYLE "roof"
         self.anchor = None  # (circle, refresh time, position)
+        self.rng = random.Random(hello.get("seed", 0))
+        self.strafe_iv = config.STRAFE_S
+        self.juke_t, self.seen_shots, self.target_charging = -1e9, set(), False
         self.slice = None  # (computed at, target id, target pos, hidden?, spot) for SLICE
         self.ffa_on = config.MODE == "ffa"
         self.last_hurt = -1e9  # last time anything (incl. the zone) damaged us
@@ -405,9 +409,11 @@ class Brain:
         dx, dy = target.pos[0] - x, target.pos[1] - y
         d = math.hypot(dx, dy) or 1.0
         ux, uy = dx / d, dy / d
-        if t - self.strafe_t > config.STRAFE_S:
+        if t - self.strafe_t > self.strafe_iv:
             self.strafe_sign = -self.strafe_sign
             self.strafe_t = t
+            if config.STRAFE_JITTER:
+                self.strafe_iv = self.rng.uniform(*config.STRAFE_JITTER_S)
         px, py = -uy * self.strafe_sign, ux * self.strafe_sign
         if not self.nav.walkable_xy(x + px * config.STRAFE_PROBE_M, y + py * config.STRAFE_PROBE_M):
             self.strafe_sign = -self.strafe_sign
@@ -516,6 +522,39 @@ class Brain:
         spot = best[1] if best else None
         self.slice = (t, target.id, tp, hidden, spot)
         return spot
+
+    def juke(self, obs, target, t):
+        """STRAFE_JITTER: flip strafe direction when the target fires at us (new bullet near it, or a laser charge)."""
+        x, y = obs["self"]["pos"][0], obs["self"]["pos"][1]
+        fired = target.charging and not self.target_charging
+        self.target_charging = bool(target.charging)
+        ids = set()
+        for p in obs["projectiles"]:
+            ids.add(p["id"])
+            if p["id"] in self.seen_shots or p.get("kind") != "gun":
+                continue
+            px, py = p["pos"][0], p["pos"][1]
+            if (hdist((px, py), target.pos) < config.JUKE_NEAR_M
+                    and p["vel"][0] * (x - px) + p["vel"][1] * (y - py) > 0):
+                fired = True
+        self.seen_shots = ids
+        if fired and t - self.juke_t >= config.JUKE_MIN_S:
+            self.juke_t = t
+            self.strafe_sign = -self.strafe_sign
+            self.strafe_t = t
+
+    def lost_threat(self, me):
+        """THREAT_MEMORY: newest mech track out of view (older than the aim memory), within THREAT_WATCH_M, as
+        (predicted x, y) or None."""
+        best = None
+        for e in self.track.targets_sorted("mech", max_age=config.THREAT_MEMORY_S):
+            if e.age <= config.TRACK_AIM_MEMORY_S:
+                continue
+            k = min(e.age, config.THREAT_PREDICT_S)
+            p = (e.pos[0] + e.vel[0] * k, e.pos[1] + e.vel[1] * k)
+            if hdist(p, me["pos"]) <= config.THREAT_WATCH_M and (best is None or e.age < best[0]):
+                best = (e.age, p)
+        return None if best is None else best[1]
 
     def hidden_from(self, me, threat):
         p = me["pos"]
@@ -687,6 +726,8 @@ class Brain:
                 goal, precise = (pair[0] if reloading else pair[1]), True
                 hide = reloading
             else:
+                if config.STRAFE_JITTER:
+                    self.juke(obs, target, t)
                 move = self.strafe(me, target, t)
         elif mech is not None:
             mode = "AVOID"
@@ -703,7 +744,10 @@ class Brain:
                 mode, goal = "HUNT", self.hunt_point(obs, t)
             if config.LASER_ROAM and not self.has_laser(me) and not self.danger and t < config.LASER_ROAM_UNTIL_S:
                 mode, goal = "SEARCH", self.roam_point(obs, t)
-            if (t < config.LOOT_UNTIL_S and not late and not self.recovering
+            lost = self.lost_threat(me) if config.THREAT_MEMORY else None
+            if lost is not None:
+                mode = "WATCH"  # an enemy just went out of view: keep the zone spot, face it, no drones or loot
+            elif (t < config.LOOT_UNTIL_S and not late and not self.recovering
                     and t - self.last_exchange > 3.0):
                 npc = None if ffa else self.pick_npc(me)
                 lg = self.loot_goal(obs, allow_crates=not ffa)
@@ -726,7 +770,7 @@ class Brain:
             mx, my, jump, boost = roof
         else:
             reach = config.COVER_REACHED_M if precise else 2.0
-            if tiny_zone and mode in ("ZONE", "HOLD"):
+            if tiny_zone and mode in ("ZONE", "HOLD", "WATCH"):
                 reach = config.LATE_TINY_REACH_M
             far = hdist(goal, (x, y)) > reach and not stand
             mx, my, jump, boost = self.nav.next_step(me["pos"], goal, t, 1.0 if far else 0.0, precise=precise)
@@ -742,7 +786,7 @@ class Brain:
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
-        elif mode in ("FIGHT", "DROP", "HOLD", "LOOT", "CUBES", "CRATE") or (mode != "ZONE" and (ffa or late)):
+        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE") or (mode != "ZONE" and (ffa or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge
@@ -759,7 +803,12 @@ class Brain:
         act.update(move=[mx, my], boost=boost, jump=jump)
 
         # torso
-        act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and (not self.has_laser(me) if config.SWEEP_UNTIL_LASER else me["weapons"][1] is None)), 0.0]
+        sweep = config.SWEEP_FOR_WEAPONS and (not self.has_laser(me) if config.SWEEP_UNTIL_LASER
+                                              else me["weapons"][1] is None)
+        act["aim"] = [self.idle_yaw(mx, my, me, sweep=sweep or (config.SCAN_ALWAYS and target is None)), 0.0]
+        lost = self.lost_threat(me) if config.THREAT_MEMORY and target is None else None
+        if lost is not None and self.track.threat_bearing() is None:
+            act["aim"] = [math.atan2(lost[1] - y, lost[0] - x), 0.0]
         if target is None and threat is not None and mode in ("RECOVER", "AVOID", "HEAL"):
             act["aim"] = [math.atan2(threat.pos[1] - y, threat.pos[0] - x), 0.0]  # never show our back
         elif (config.DEFENSIVE_EVASION and mode == "HOLD" and target is None
@@ -773,6 +822,12 @@ class Brain:
             if gun and gun["reload"] <= 0 and gun["ammo"] < gun["stats"]["mag"]:
                 fight["reload"] = True
         act.update(fight)
+        if config.SCAN_ALWAYS and mode == "FIGHT" and hide and target is not None and not any(act["fire"]):
+            gun = next((w for w in me["weapons"] if w and w["kind"] == "gun"), None)
+            charging = any(w and w.get("charge") for w in me["weapons"])
+            if (gun and gun["reload"] > config.SCAN_RELOAD_S and not charging
+                    and self.hidden_from(me, target)):
+                act["aim"] = [self.idle_yaw(0.0, 0.0, me, sweep=True), 0.0]  # look around while reloading in cover
 
         self.last_target = target.id if target is not None else None  # for tools/duel.py stats
         self.draw_debug(obs, act, mode, target, goal, hide)
