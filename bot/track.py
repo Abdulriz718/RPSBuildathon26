@@ -22,6 +22,7 @@ class Target:
     age: float = 0.0
     radius: float = 2.5
     height: float = 9.0
+    cubes: int = 0
 
     def predict(self, seconds: float) -> Vec3:
         return tuple(p + v * (self.age + seconds) for p, v in zip(self.pos, self.vel))
@@ -64,6 +65,7 @@ class Tracker:
                 charging=actor.get("charging", False),
                 aim=tuple(aim) if aim is not None else None, last_seen=self.now,
                 radius=dimensions["radius"] * scale, height=dimensions["height"] * scale,
+                cubes=int(actor.get("cubes", 0) or 0),
             )
 
         for event in obs["events"]:
