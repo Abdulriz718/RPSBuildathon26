@@ -88,6 +88,7 @@ class Brain:
         self.slice = None  # (computed at, target id, target pos, hidden?, spot) for SLICE
         self.ffa_on = config.MODE == "ffa"
         self.last_mech_hurt = -1e9  # last time a mech (not a drone or the zone) damaged us
+        self.last_kill_t = -1e9  # KILL_CUBES
         self.explored = set()  # FARM_SEEK patches we've passed close to
         self.seek = None  # (picked at, (x, y) goal, patch)
         self.last_hurt = -1e9  # last time anything (incl. the zone) damaged us
@@ -322,13 +323,14 @@ class Brain:
             return None
         return best[1], best[2], (1 if slot1 is not None else None)
 
-    def cube_goal(self, obs, fighting_d):
+    def cube_goal(self, obs, fighting_d, limit=None):
         """Nearest remembered cube worth walking to: within CUBE_MAX_M when nobody is close, or within
         CUBE_FIGHT_M (a few steps) even mid-fight, since the dead mech's cubes land where it fell."""
         if not config.CUBE_COLLECT:
             return None
         pos = obs["self"]["pos"]
-        limit = config.CUBE_MAX_M if fighting_d is None or fighting_d > config.CUBE_SAFE_M else config.CUBE_FIGHT_M
+        if limit is None:
+            limit = config.CUBE_MAX_M if fighting_d is None or fighting_d > config.CUBE_SAFE_M else config.CUBE_FIGHT_M
         best = None
         for iid, (typ, _, p, _) in self.loot.items.items():
             if typ != "cube" or abs(p[2] - pos[2]) > 4:
@@ -663,6 +665,7 @@ class Brain:
                 self.last_exchange = t
             if e["type"] == "kill" and isinstance(e.get("target"), int) and e["target"] < 100:
                 self.our_kills.add(e["target"])
+                self.last_kill_t = t
             if e["type"] == "damaged":
                 self.last_hurt = t
                 if isinstance(e.get("by"), int) and e["by"] < 100:
@@ -743,7 +746,13 @@ class Brain:
                 sp = self.seek_goal(obs, t)
                 if sp is not None:
                     fgoal = (sp, "seek", None)
-        cgoal = None if hurry else self.cube_goal(obs, hdist(target.pos, (x, y)) if target is not None else None)
+        target_d = hdist(target.pos, (x, y)) if target is not None else None
+        kill_grab = (config.KILL_CUBES and not hurry and t - self.last_kill_t < config.KILL_CUBES_S
+                     and (target_d is None or target_d > config.KILL_CUBE_SAFE_M))
+        if kill_grab:  # just killed one: pick up what it dropped before the next fight
+            cgoal = self.cube_goal(obs, target_d, limit=config.KILL_CUBE_M)
+        else:
+            cgoal = None if hurry else self.cube_goal(obs, target_d)
         roof_goal = None
         goal = zgoal
         stand = hide = False
@@ -774,7 +783,7 @@ class Brain:
             mode = "ROOFUP"
             spot = self.style_roof_spot(obs, t)
             goal, roof_goal = (spot[0], spot[1]), spot
-        elif cgoal is not None and (target is None or hdist(cgoal, (x, y)) <= config.CUBE_FIGHT_M):
+        elif cgoal is not None and (target is None or kill_grab or hdist(cgoal, (x, y)) <= config.CUBE_FIGHT_M):
             mode, goal = "CUBES", cgoal
         elif wgoal is not None:
             mode, goal = "WEAPON", (wgoal[1][0], wgoal[1][1])
