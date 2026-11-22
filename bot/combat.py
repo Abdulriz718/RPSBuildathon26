@@ -57,6 +57,9 @@ def engage(me, target, world, *, sim_step=0.0):
         if can_reload:
             action["reload"] = True
         return action
+    if (config.FIRE_MAX_FLIGHT_S is not None and flight > config.FIRE_MAX_FLIGHT_S
+            and abs(target.vel[2]) < config.FIRE_AIRBORNE_VZ):
+        return action  # a long shot at a grounded target: it can sidestep; wait for a closer or airborne shot
     lead = tuple(p + v * flight for p, v in zip(future_center, target.vel))
     if not world.los(muzzle, lead):
         if can_reload:

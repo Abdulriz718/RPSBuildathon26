@@ -140,6 +140,64 @@ class Mech:
         return any(w and w["kind"] == "laser" and w["charge"] > 0 for w in self.weapons)
 
 
+class Trees:
+    """Tree sight blocking from world.json (protocol.md section 8): trunks stop sight; a sight line that passes
+    through enough crown is blocked (transmittance exp(-density * metres in crowns) below canopyBlockT).
+    Shots are not affected. Canopy doesn't block within near_range (proximity sensors)."""
+
+    CELL = 10.0
+
+    def __init__(self, map_dir):
+        import numpy as np
+        with open(Path(map_dir) / "v2" / "world.json") as f:
+            w = json.load(f)
+        t = w["trees"]
+        n = len(t["fields"])
+        a = np.array(t["data"], dtype=np.float64).reshape(-1, n)
+        col = {k: a[:, i] for i, k in enumerate(t["fields"])}
+        self.x, self.y, self.z = col["x"], col["y"], col["z"]
+        self.cx, self.cy = col["crownX"], col["crownY"]
+        self.r = col["crownR"]
+        self.zc = col["z"] + (col["crownBase"] + col["height"]) / 2
+        self.hh = np.maximum((col["height"] - col["crownBase"]) / 2, 0.5)
+        self.top_trunk = col["z"] + col["crownBase"]
+        self.tr = col["trunkR"]
+        rules = w["rules"]
+        self.max_len = math.log(1.0 / rules["canopyBlockT"]) / rules["canopyDensity"]  # ~4 m of crown blocks
+        self.grid = {}
+        for i in range(len(self.x)):
+            reach = max(self.r[i], self.tr[i]) + 0.5
+            for gx in range(int((self.cx[i] - reach) // self.CELL), int((self.cx[i] + reach) // self.CELL) + 1):
+                for gy in range(int((self.cy[i] - reach) // self.CELL), int((self.cy[i] + reach) // self.CELL) + 1):
+                    self.grid.setdefault((gx, gy), []).append(i)
+        self.np = np
+
+    def blocks(self, a, b, canopy=True):
+        np = self.np
+        d = math.dist(a, b)
+        n = max(2, int(d) + 1)
+        s = np.linspace(0.0, 1.0, n)
+        px, py, pz = a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s, a[2] + (b[2] - a[2]) * s
+        cells = set(zip((px // self.CELL).astype(int).tolist(), (py // self.CELL).astype(int).tolist()))
+        cand = set()
+        for c in cells:
+            cand.update(self.grid.get(c, ()))
+        if not cand:
+            return False
+        idx = np.fromiter(cand, dtype=np.int64)
+        # trunks
+        dx, dy = px[None, :] - self.x[idx, None], py[None, :] - self.y[idx, None]
+        trunk = (dx * dx + dy * dy <= self.tr[idx, None] ** 2) & (pz[None, :] >= self.z[idx, None]) &                 (pz[None, :] <= self.top_trunk[idx, None])
+        if trunk[:, 1:-1].any():
+            return True
+        if not canopy:
+            return False
+        ex, ey = px[None, :] - self.cx[idx, None], py[None, :] - self.cy[idx, None]
+        ez = (pz[None, :] - self.zc[idx, None]) / self.hh[idx, None]
+        inside = (ex * ex + ey * ey) / (self.r[idx, None] ** 2) + ez * ez <= 1.0
+        return inside[:, 1:-1].sum() * (d / (n - 1)) >= self.max_len
+
+
 class Zone:
     """Shrinking circle from config.zone: hold, then shrink toward a random circle inside the current one."""
 
@@ -199,6 +257,7 @@ class Sim:
         self.record = record
         self.frames = []
         self.zone = None  # Zone, for full-match scenes
+        self.trees = shared_trees() if USE_TREES else None
         self.deaths = []  # (t, id) in order
 
     @property
@@ -801,7 +860,11 @@ class Sim:
             if abs(wrap(yaw - a.aim[0])) > math.radians(v["fov_deg"]) / 2:
                 return False
         eye = a.eye_pos()
-        return self.world.los(eye, b.center()) or self.world.los(eye, (b.pos[0], b.pos[1], b.pos[2] + b.height))
+        canopy = d > v["near_range"]
+        for pt in (b.center(), (b.pos[0], b.pos[1], b.pos[2] + b.height)):
+            if self.world.los(eye, pt) and (self.trees is None or not self.trees.blocks(eye, pt, canopy)):
+                return True
+        return False
 
     def sees_point(self, a, p):
         d = math.dist(a.pos, p)
@@ -812,7 +875,10 @@ class Sim:
             yaw = math.atan2(p[1] - a.pos[1], p[0] - a.pos[0])
             if abs(wrap(yaw - a.aim[0])) > math.radians(v["fov_deg"]) / 2:
                 return False
-        return self.world.los(a.eye_pos(), (p[0], p[1], p[2] + 0.5))
+        pt = (p[0], p[1], p[2] + 0.5)
+        if not self.world.los(a.eye_pos(), pt):
+            return False
+        return self.trees is None or not self.trees.blocks(a.eye_pos(), pt, d > v["near_range"])
 
     def observe(self, m, memory, last_obs_t):
         """Build the protocol obs for mech m. memory: dict id -> last seen t (updated)."""
@@ -929,6 +995,15 @@ class Sim:
 # ---- shared map/nav so each duel doesn't rebuild them -----------------------
 _WORLD = None
 _NAV = None
+_TREES = None
+USE_TREES = True  # tree sight blocking (set False to reproduce pre-tree results)
+
+
+def shared_trees():
+    global _TREES
+    if _TREES is None:
+        _TREES = Trees(ROOT / "arena")
+    return _TREES
 
 
 def shared_world():

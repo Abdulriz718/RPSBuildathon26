@@ -147,6 +147,7 @@ def run_match(args):
     bot = Bot(hello)
     memory, last_obs_t = {}, -1.0
     modes = Counter()
+    ffa_t = None  # when the bot first played in ffa mode (AUTO_FFA)
     while sim.t < max_t and ours.alive and sum(m.alive and m.kind == "mech" for m in sim.mechs.values()) > 1:
         if sim.tick % 2 == 0:
             obs = sim.observe(ours, memory, last_obs_t)
@@ -156,6 +157,8 @@ def run_match(args):
             a.pop("debug", None)
             ours.action = a
             modes[bot.brain.mode] += 1
+            if ffa_t is None and getattr(bot.brain, "ffa_on", False):
+                ffa_t = sim.t
             for b in bots:
                 if b.m.alive:
                     b.m.action = b.act()
@@ -181,7 +184,7 @@ def run_match(args):
             "t": ours.death_t if ours.death_t is not None else sim.t, "kills": sum(
                 1 for (dt_, mid) in sim.deaths if mid != 0 and mid in sim.mechs and sim.mechs[mid].dmg_in > 0) and None,
             "dmg_out": ours.dmg_out, "dmg_in": ours.dmg_in, "zone_in": getattr(ours, "zone_in", 0.0),
-            "killer": killer, "modes": dict(modes), "errors": bot.errors,
+            "killer": killer, "modes": dict(modes), "ffa_t": ffa_t, "errors": bot.errors,
             "loadout": "+".join(w["kind"] for w in ours.weapons if w)}
 
 
@@ -205,6 +208,11 @@ def summarize(rs, label):
         print(f"  !! {errs} bot decision errors")
 
 
+def _ffa_note(rs):
+    ts = [r["ffa_t"] for r in rs if r.get("ffa_t") is not None]
+    return f" | ffa mode in {len(ts)}/{len(rs)}, from t={statistics.median(ts):.0f}s median" if ts else ""
+
+
 def compare(variants, n, seed=1, workers=12):
     """Paired comparison on the same seeds: mean score of each variant and its difference from the first."""
     res = {}
@@ -219,7 +227,7 @@ def compare(variants, n, seed=1, workers=12):
         se = statistics.stdev(diff) / math.sqrt(n) if label != base_label else 0.0
         early = sum(r["place"] >= 13 for r in res[label])
         print(f"{label:<40} score {statistics.mean(sc):5.2f} | vs base {statistics.mean(diff):+.2f} +-{se:.2f} | "
-              f"died 13th-16th {early}/{n} | won {sum(r['place'] == 1 for r in res[label])}")
+              f"died 13th-16th {early}/{n} | won {sum(r['place'] == 1 for r in res[label])}" + _ffa_note(res[label]))
     return res
 
 
