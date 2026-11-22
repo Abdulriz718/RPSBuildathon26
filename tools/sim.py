@@ -303,6 +303,8 @@ class Sim:
                 self._resolve_offers(m)
         if self.npc_brains and self.tick % 2 == 0:
             self._drones()
+        if self.zone is not None and USE_DROPS:
+            self._supply(dt)
         if self.zone is not None:
             dps = self.zone.phase(self.t)["dps"]
             for m in self.mechs.values():
@@ -753,6 +755,53 @@ class Sim:
             self.cube_items[self.next_cube] = [t.pos[0] + 2.0 * math.cos(a), t.pos[1] + 2.0 * math.sin(a), t.pos[2]]
             self.next_cube += 1
 
+    def _give_cubes(self, m, n):
+        m.cubes += n
+        m.apply_cubes_and_upgrades()
+        th = self.cfg["cubes"]["upgrade_thresholds"]
+        while m.next_threshold < len(th) and m.cubes >= th[m.next_threshold]:
+            m.next_threshold += 1
+            m.offers.append(self._draw_offer(m))
+
+    def _supply(self, dt):
+        """Supply drops (protocol 7): called at drops.times, land fall_s later on open ground inside the next circle;
+        stand alone in the ring for capture_s: +cubes, full HP and energy. House bots ignore them (unknown)."""
+        dc = self.cfg["drops"]
+        if not hasattr(self, "supply"):
+            self.supply, self.supply_called = [], 0
+        if self.supply_called < len(dc["times"]) and self.t >= dc["times"][self.supply_called]:
+            self.supply_called += 1
+            ph = self.zone.phase(self.t)
+            nav = shared_world()[1]
+            (cx, cy), r = ph["next_center"], ph["next_radius"] * dc.get("spread", 0.7)
+            for _ in range(200):
+                a, rr = self.rng.uniform(-math.pi, math.pi), r * math.sqrt(self.rng.random())
+                x, y = cx + rr * math.cos(a), cy + rr * math.sin(a)
+                if self.world.in_bounds(x, y) and nav.walkable_xy(x, y):
+                    break
+            self.supply.append({"id": 20000 + self.supply_called, "pos": [x, y, self.world.surface(x, y)],
+                                "lands_at": self.t + dc["fall_s"], "holder": None, "progress": 0.0, "taken": False})
+        for d in self.supply:
+            if d["taken"] or self.t < d["lands_at"]:
+                continue
+            inside = [m for m in self.mechs.values() if m.alive and m.kind == "mech"
+                      and math.hypot(m.pos[0] - d["pos"][0], m.pos[1] - d["pos"][1]) <= dc["radius"]
+                      and abs(m.pos[2] - d["pos"][2]) <= 4]
+            if not inside:
+                d["holder"], d["progress"] = None, 0.0
+            elif len(inside) == 1:
+                m = inside[0]
+                if d["holder"] != m.id:
+                    d["holder"], d["progress"] = m.id, 0.0
+                d["progress"] += dt
+                if d["progress"] >= dc["capture_s"]:
+                    d["taken"] = True
+                    self._give_cubes(m, dc["cubes"])
+                    m.hp = m.max_hp
+                    m.energy = m.stats.get("energy", m.energy)
+                    m.events.append({"type": "drop", "id": d["id"], "cubes": m.cubes})
+                    m.drops_taken = getattr(m, "drops_taken", 0) + 1
+
     def _collect_cubes(self):
         """A cube goes to the closest mech within pickup_radius (ties: lower id)."""
         r = self.cfg["cubes"]["pickup_radius"]
@@ -938,7 +987,10 @@ class Sim:
                      "cubes": m.cubes, "upgrades": list(m.upgrades), "weapons": weapons, "stats": dict(m.stats),
                      "in_zone": True if self.zone is None else self.zone.inside(self.t, m.pos)},
             "mechs": mechs, "projectiles": projectiles, "crates": [], "cubes": cubes, "pickups": pickups,
-            "sounds": sounds, "beams": [], "events": events, "drops": [],
+            "sounds": sounds, "beams": [], "events": events, "drops": [{"id": d["id"], "pos": [round(v, 2) for v in d["pos"]], "radius": self.cfg["drops"]["radius"],
+                       "lands_in": round(max(0.0, d["lands_at"] - self.t), 2), "capture_s": self.cfg["drops"]["capture_s"],
+                       "progress": round(d["progress"], 2), "holder": d["holder"]}
+                      for d in getattr(self, "supply", []) if not d["taken"]],
             "zone": (self.zone.obs(self.t) if self.zone is not None else
                      {"center": [cx, cy], "radius": 560, "next_center": [cx, cy], "next_radius": 380,
                       "shrink_start": 1e4, "shrink_end": 1e4 + 50, "dps": 20}),
@@ -996,6 +1048,7 @@ class Sim:
 _WORLD = None
 _NAV = None
 _TREES = None
+USE_DROPS = True  # supply drops in full-match scenes (set False to reproduce pre-drop results)
 USE_TREES = True  # tree sight blocking (set False to reproduce pre-tree results)
 
 

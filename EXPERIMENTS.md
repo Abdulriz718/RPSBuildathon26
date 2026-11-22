@@ -507,4 +507,30 @@ Note: WEAPON_RANK/BONUS are computed at import, so `--set LIGHTNING_FIRST=False`
 In FIGHT: close to 25 m (boost when energy > 30), then strafe; replaces cover peek / ranged strafe. Lightning-first
 off again, so the base is #20 (4.10). Never tested on the server; sim said -0.23 on the pre-farm base.
 
-| 22 | | | #20 + STYLE rush | | |
+| 22 | | | #20 + STYLE rush | 4.13 | flat: fighting range does not decide matches; off |
+
+## Roof when fighting (`STYLE="roof"`, `ROOF_ONLY_FIGHTING`)
+
+The old roof style climbed at the start and camped until 5:30, which would drop farming. Changed: farm as usual;
+once a hunter is in view beyond 45 m, climb a roof at least 8 m tall within 60 m and fight from it; leave to farm
+after. Rush off again (#22 4.13, flat).
+
+Sim, 12 matches: 71% of fight ticks on a roof, but climbing takes 28% of all time and FARM drops 18% -> 8%.
+Sim, 48 paired: -0.62 +-0.19; hunters' hit rate on us 33% -> 41% (standing still on the roof).
+
+| 23 | | | #20 + roof when fighting | not submitted | skipped: sim -0.62, climbing costs farm time; STYLE back to default |
+
+## Drop rush (`DROP_RUSH`)
+
+Supply drops (called 70/140/210 s, land 25 s later anywhere inside the next circle, seen by everyone) give 3 cubes +
+full HP + full energy. The sim had no drops, so drop play was never tuned. Old rules: within 160 m only, skip if any
+mech seen within 45 m of the drop, never while ANY mech is in view, walk there.
+DROP_RUSH: up to 450 m with boost beyond 40 m; skip only if a mech is within 20 m of the drop; only a visible mech
+within 70 m or a mech hit in the last 2 s keeps us fighting; below 60% HP go anyway (full heal).
+
+Sim now has drops (`tools/sim.py` `_supply`, house bots ignore them; `USE_DROPS`). Our sim bot dies around 49 s,
+before the first drop lands (95 s), so a passive-house-bot harness (12 matches, 300 s) checked capture:
+old rules 0.50 of 3 drops per match, DROP_RUSH 1.92. The main blocker was "any mech in view" (FIGHT 60% of ticks
+while a drop was available). Normal practice sim: +0.04 +-0.04 (drops not reached), no harm.
+
+| 24 | | | #20 + DROP_RUSH | | |

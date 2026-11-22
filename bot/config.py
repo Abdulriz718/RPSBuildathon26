@@ -117,9 +117,13 @@ LOOT_FORGET_M = 20        # forget remembered loot when this close and it isn't 
 
 # Phase 3 (brain.py). Each flag can be switched off on its own to test it.
 DROPS = True              # go capture supply drops
-DROP_MAX_M = 160          # ignore drops farther than this
+DROP_RUSH = True          # #24: drops are 3 cubes + a full heal each; the sim has no drops, so this was never tuned
+DROP_MAX_M = 450 if DROP_RUSH else 160   # ignore drops farther than this (circle radius is 380 then 240)
 DROP_EARLY_S = 4.0        # arrive at most this long before it lands (don't wait in the open)
-DROP_CLEAR_M = 45         # skip a drop if a mech was seen this close to it in the last 2 s
+DROP_CLEAR_M = 20 if DROP_RUSH else 45   # skip a drop if a mech was seen this close to it in the last 2 s
+DROP_HEAL_HP = 0.6        # DROP_RUSH: below this HP, go for a drop even with a mech in view (it's a full heal)
+DROP_BOOST_M = 40         # DROP_RUSH: boost toward a drop farther than this
+DROP_FIGHT_M = 70         # DROP_RUSH: a visible mech closer than this keeps us fighting instead (was: any visible mech)
 DROP_STAND_M = 2.5        # close enough to the drop center to stand still
 DROP_TRACK_S = 2.0
 DROP_ZONE_BUFFER_M = 2.0
@@ -294,7 +298,7 @@ LASER_ROAM_S = 12          # pick a new waypoint this often
 LASER_ROAM_STEP_M = 70     # waypoint distance
 
 # Play styles (brain.py style_fight / HOLD). "default" = cover peek and strafe at whatever range.
-STYLE = "rush"             # #22 probe. "default", "kite", "rush", "roof", "assassin". kite: server 3.10; rush: sim -0.23, never on server
+STYLE = "default"          # roof-when-fighting #23 skipped (sim -0.62); rush #22 4.13 flat. "default", "kite", "rush", "roof", "assassin". kite: server 3.10; rush: sim -0.23, never on server
 KITE_MIN_M = 120           # kite: back off (with boost) when a target is closer than this...
 KITE_MAX_M = 170           # ...and close in when farther than this
 KITE_BOOST_ENERGY = 20
@@ -302,7 +306,8 @@ RUSH_RANGE_M = 25          # rush: close to this range
 RUSH_BOOST_ENERGY = 30
 ROOF_STYLE_UNTIL_S = 330   # roof: climb onto a roof and hold it until this match time
 ROOF_STYLE_MIN_H = 8       # roofs at least this tall
-ROOF_STYLE_SEARCH_M = 160
+ROOF_STYLE_SEARCH_M = 60   # (was 160) only climb roofs close by
+ROOF_ONLY_FIGHTING = True  # roof style only once a hunter is in view; otherwise farm as usual
 ROOF_STYLE_FIGHT_M = 45    # stop climbing to fight anyone closer than this
 ROOF_STYLE_CACHE_S = 10
 ASSASSIN_HP = 0.8          # assassin: go looking for fights while HP is above this fraction

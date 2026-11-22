@@ -708,7 +708,13 @@ class Brain:
             self.healing = False
         elif hp_frac < config.HEAL_START and not visible_mech and t - self.last_exchange >= config.HEAL_CALM_S:
             self.healing = True
-        dgoal = None if (visible_mech and not self.recovering) or hurry else self.drop_goal(obs)
+        heal_run = config.DROP_RUSH and hp_frac < config.DROP_HEAL_HP
+        if config.DROP_RUSH:  # only a close mech, or one that just hit us, keeps us off a drop (unless we need the heal)
+            busy = ((visible_mech and hdist(mech.pos, (x, y)) < config.DROP_FIGHT_M)
+                    or t - self.last_mech_hurt < config.FARM_CALM_S)
+        else:
+            busy = visible_mech
+        dgoal = None if (busy and not self.recovering and not heal_run) or hurry else self.drop_goal(obs)
         defensive_tracks = (self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S)
                             if config.DEFENSIVE_EVASION else [])
         close_enemies = [enemy for enemy in defensive_tracks if not enemy.age
@@ -762,6 +768,7 @@ class Brain:
             goal = self.retreat_goal(obs, threat, t)
             stand = all(self.hidden_from(me, enemy) for enemy in close_enemies)
         elif (config.STYLE == "roof" and t < config.ROOF_STYLE_UNTIL_S and not self.on_any_roof(me)
+              and (target is not None or not config.ROOF_ONLY_FIGHTING)
               and (target is None or hdist(target.pos, (x, y)) > config.ROOF_STYLE_FIGHT_M)
               and self.style_roof_spot(obs, t) is not None):
             mode = "ROOFUP"
@@ -841,7 +848,7 @@ class Brain:
         else:
             mode = "HOLD"
             goal = self.away_from_danger(obs, goal)
-            if config.STYLE == "roof" and self.on_any_roof(me):
+            if config.STYLE == "roof" and self.on_any_roof(me) and not config.ROOF_ONLY_FIGHTING:
                 goal, stand = (x, y), True
             if (config.STYLE == "assassin" and me["hp"] >= config.ASSASSIN_HP * me["max_hp"]
                     and t < config.ASSASSIN_UNTIL_S):
@@ -880,7 +887,8 @@ class Brain:
             mx, my, jump, boost = self.nav.next_step(me["pos"], goal, t, 1.0 if far else 0.0, precise=precise)
             if not far:
                 mx = my = 0.0
-            boost = boost or (mode == "ZONE" and far) or (mode in ("RECOVER", "AVOID", "DISENGAGE", "HEAL") and far and me["energy"] > 30)
+            boost = boost or (mode == "ZONE" and far) or (
+                config.DROP_RUSH and mode == "DROP" and hdist(goal, (x, y)) > config.DROP_BOOST_M and me["energy"] > 20) or (mode in ("RECOVER", "AVOID", "DISENGAGE", "HEAL") and far and me["energy"] > 30)
         bearing = None
         if config.DEFENSIVE_EVASION:
             bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)
