@@ -279,77 +279,36 @@ Evasion gained five duel wins on each split and raised jet energy use. Its arena
 placement changed by -0.25 on training and +0.25 on holdout. The default passed
 the selection gate because the evasion candidate failed to improve both splits.
 These are simulated placements with a small number of distinct arena seeds.
-The official record remains 3.4 followed by 3.17. No submission was made.
+Team follow-up: a later submission may have scored **3.08**. The result and
+submitted SHA are unconfirmed. The team reports **3.4** as the current score
+while a separate run is in progress. The offline tuning run did not submit an entry.
 
 Reproduce with `python tools/bench.py --tune-movement --seeds 1 5335629 --holdout-seeds 271828 7813031 --workers 4`.
 The replay benchmark measured 1.88 ms p99 with zero fallbacks. All 17 unit tests
 passed and the protocol checker received all 300 answers on time.
 
-## Sim hunter accuracy check (handoff step 1): no recalibration needed
+## Single-factor zone-edge and pinch avoidance
 
-The handoff said real house bots hit 60-89% and the sim's 32% on us made real fights look half as deadly. Checked:
+Hypothesis: redirecting exposed movement near the shrinking boundary will improve
+mean placement by preserving a route back inside. Official team reference 3.4,
+submitted SHA unknown. Local control was farm mode at `4c5fbbd`.
 
-- Real replay `mechanics-v2-16` pooled over all 16 bots: 1061 gun shots, 433 hits on mechs (41%) + 171 on drones
-  (16%) = 57%. The 60-89% figures were per-bot and included drone hits. With drone shots removed (hit at ~85%),
-  mech-on-mech accuracy is about **50%**. `duel-hard-4` (hard vs hard 1v1): 66% on 77 shots.
-- Sim house bots shooting each other in `tools/ffa.py` (6 matches): easy 36%, medium 44%, hard 55%, expert 68%,
-  pooled **51%**. That matches the real ~50%, so the aim model is already right.
-- Against us in `tools/practice.py` they hit 32-33% of shots. Removing all aim noise and reaction delay only lifts it
-  to 36%. Bullets that reach us miss by 0-2 m sideways: our bot changes direction during the 0.2-0.4 s flight.
-  So the gap is our movement, not hunter skill. The real hit rate on us is unknown (no replays of our matches).
-- New knobs kept for later what-ifs: `--squad noise_scale=0.5 react_scale=0.5`.
+`ZONE_EDGE_AVOIDANCE` in bot/config.py gates a final movement-heading adjustment
+in bot/brain.py. It projects the moving circle one second ahead, penalizes lost
+edge clearance and visible opponents in the inward lane, and checks alternative
+headings for terrain clearance. The original movement magnitude and action flags
+are preserved. The focused tools/test_phase3.py test exercises interior travel,
+outside recovery, and the same inward route with and without a blocking mech.
 
-## Auto-detect free-for-all (`AUTO_FFA`, off by default)
+Paired runs used `tools/bench.py --matches --modes farm --seeds 1 5335629 --random-seeds 0 --workers 2`
+with only `--set ZONE_EDGE_AVOIDANCE=False` or `True` changed. Across eight
+16-player expert simulations per arm the placement points matched exactly:
+3, 15, 8, 8, 5, 6, 7, 7 (mean 7.375, delta 0). Zone survival was 8/8 for each.
+Both won 16/32 expert duels with damage-free rate 0.9203265765765766.
+These independent opponents differ from the coordinated official practice squad.
 
-Brain switches farm -> ffa once (alive drop) - (our `kill` events) >= 2 in the first 200 s. Practice house bots only
-die to us, so this should never fire in practice.
-
-| sim | variant | vs base | switched to ffa |
-|---|---|---|---|
-| practice, 144 paired | `AUTO_FFA=True` | -0.01 +-0.01 | 2/144 |
-| practice, 144 paired | threshold 1 | -0.03 +-0.03 | 15/144 |
-| ffa, 120 paired (base 10.91) | `AUTO_FFA=True` | -0.12 +-0.20 | 109/120, median t=18 s |
-| ffa, 120 paired | `MODE='ffa'` always | +0.00 +-0.46 | 120/120 |
-
-Detection works (fires early in a real FFA, almost never in practice), but ffa mode itself no longer beats farm in the
-current FFA sim (the earlier +1.05 was before the `19050b9` sim-bot changes). Left off. Flip it on only if ffa mode
-is re-tuned and wins again.
-
-## Heal between kills (`HEAL_BETWEEN`, brain.py HEAL mode)
-
-Below 70% HP, with no mech in sight and no hits either way for 3 s: break line of sight from the last threat, hold
-fire (dealing damage resets regen too) and reload, until 95% HP. Any damage taken ends it, so we fight back.
-
-- First try started after 1.5 s without being hit. That fired mid-fight during hunter reloads: 28 of 34 heal spells
-  ended with us shot at lower HP. Practice sim -0.17 +-0.08. Fixed by requiring no visible mech and no hits either way.
-- Fixed version, 12 matches instrumented: 8 heal spells, typically +10 to +40% HP before a hunter finds us.
-- Practice sim, 144 paired: start 70% **+0.09 +-0.05**, start 90% +0.08 +-0.07. Small, but no harm.
-
-| 11 | | | 3.40 behaviour + HEAL_BETWEEN (start 70%, stop 95%, calm 3 s), commit 372872f | 3.27 | inconclusive: within noise of 3.40 |
-
-## Crate hunting for a laser (`CRATE_HUNT`, brain.py CRATE mode)
-
-Crates (36 per match, 300 HP, 50% weapon drop) were only shot when idle: HOLD mode, drones first, within 90 m,
-before 150 s. CRATE mode: while we hold no laser, before 240 s, nothing hit us for 2 s and no visible mech within
-100 m, walk to the nearest remembered ground crate (up to 200 m, inside 90% of the next circle) and shoot it from
-60 m. WEAPON mode, earlier in the cascade, picks up the drop (laser bonus 70 m).
-
-Bug fixed on the way: a crate broken from range stayed in memory until we walked within 20 m, so the bot could stand
-shooting at nothing. Now a remembered crate in plain view (in FOV or near range, line of sight) that isn't listed
-is forgotten.
-
-Not testable in the sims (no crates). Checked on the recorded stream plus a synthetic setup: walks to an 80 m crate,
-stands and fires on 29/30 ticks at 30 m, forgets it once gone. `HEAL_BETWEEN` is off in this build so crates are
-measured alone against 3.40.
-
-| 12 | | | 3.40 behaviour + CRATE_HUNT (HEAL off) | 3.15 | inconclusive, below 3.40; off |
-
-## The 3.40 behaviour was not the default after all
-
-Identity check in the practice sim (same 24 seeds, exported `4af2045` vs current code): only **5/24** matches came
-out identical. Three changes made after 3.40 were on by default, so #9-#12 were not "3.40 + one change":
-`COMBINED_FIRE=True`, `CUBE_COLLECT=True`, and the torso weapon sweep continuing until a laser (3.40 stopped at any
-2nd weapon). With those off (`COMBINED_FIRE=False`, `CUBE_COLLECT=False`, new `SWEEP_UNTIL_LASER=False`): **24/24**
-identical, with `AUTO_FFA` on or off. Those are now the defaults.
-
-| 13 | | | exact 3.40 behaviour (24/24 identical in sim) + AUTO_FFA on (FFA detector for the final) | | |
+18 unit tests passed. Candidate-enabled fuzz and hardening passed (p99 5.9 ms
+in fuzz, 5.4 ms in the last minute of hardening). Default replay p99 was 2.51 ms
+over 900 ticks with zero fallbacks; the local checker received 300/300 on time.
+Decision: keep the experiment disabled. No measured placement gain and no
+official candidate submission or new official score.

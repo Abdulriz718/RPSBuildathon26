@@ -31,6 +31,20 @@ class PhaseThreeTests(unittest.TestCase):
         self.obs["zone"].update(center=[0, 0], radius=300, next_center=[0, 0],
                                 next_radius=240, shrink_end=110)
 
+    def test_edge_move_redirects_outward_and_skirts_blocked_inward_lane(self):
+        with patch("brain.World.load", return_value=FlatWorld()):
+            brain = Brain(self.hello)
+        self.obs["zone"].update(radius=100, next_radius=100)
+        self.obs["self"]["stats"]["walk_speed"] = 12
+        self.assertEqual(brain.zone_edge_move(self.obs, 1, 0), (1, 0))
+        self.obs["self"]["pos"][0] = 106
+        self.assertLess(brain.zone_edge_move(self.obs, 1, 0)[0], 0)
+        self.assertEqual(brain.zone_edge_move(self.obs, -1, 0), (-1, 0))
+        self.obs["mechs"] = [{"kind": "mech", "pos": [85, 0, 0]}]
+        dx, dy = brain.zone_edge_move(self.obs, -1, 0)
+        self.assertLess(dx, 0)
+        self.assertGreater(abs(dy), 0.5)
+
     def test_drop_skips_contested_and_soon_unsafe_ring(self):
         drop = {"id": 20000, "pos": [25, 0, 0], "radius": 8, "holder": None, "lands_in": 0}
         self.obs["drops"] = [drop]
