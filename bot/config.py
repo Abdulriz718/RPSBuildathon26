@@ -71,6 +71,10 @@ COVER_TARGET_MOVE_M = 6.0
 COVER_LOW_HP = 0.0   # sim: retreating while chased loses duels (hard: 0% -> 43% win at 0.0)
 COVER_RECOVER_HP = 0.8
 COVER_REACHED_M = 1.2
+RELOAD_SMART = False      # sim: no change in reloads in sight (open ground, no cover), -0.07 +-0.06. Reload discipline (aim audit: 27% of fight time reloading, 2/3 of it in the target's sight)
+RELOAD_DUCK_AMMO = 3      # with cover nearby, go hide at this many rounds left and reload there
+RELOAD_TOPUP_AMMO = 6     # reload at this many rounds when not firing and no target within RELOAD_TOPUP_M
+RELOAD_TOPUP_M = 150
 COVER_PAIR_BUDGET_MS = 4.0   # cover_pair search gives up after this
 LOOT_WINDOW_S = 60.0
 LOOT_CRATE_RANGE_M = 50.0
@@ -160,8 +164,9 @@ AUTO_FFA_MAX_T = 200.0    # stop checking later: zone deaths start to muddy the 
 
 # Heal between kills (brain.py HEAL mode): when hurt between fights, break line of sight and
 # hold fire (dealing damage also resets the regen timer) until healed. Taking damage ends it: we fight back.
-HEAL_BETWEEN = False  # server 3.27 (#11), within noise of 3.40; off while crates are tested alone
-HEAL_START = 0.70          # start below this HP fraction...
+HEAL_BETWEEN = True   # #28 (user rule): low HP and nobody around -> go passive and let regen work. #11 (pre-farm, mixed base): 3.27
+HEAL_BEFORE_FARM = True    # while healing, don't shoot drones/crates (dealing damage resets the 5 s regen timer)
+HEAL_START = 0.60          # start below this HP fraction (#11: 0.70)...
 HEAL_DONE = 0.95           # ...and keep healing until this
 HEAL_CALM_S = 3.0          # start only after this long with no hits either way and no mech in sight
 
@@ -206,8 +211,8 @@ FARM_FIGHT_M = 90          # a visible mech closer than this takes priority
 FARM_CALM_S = 2.0          # ...as does a mech that hit us this recently
 # STALK (#27): house bots that aren't hunting us are ~44% of our kills in the sim, 63% of those finished from behind
 # (rear hits x1.5). Seek them out when idle, and flank to their back before opening fire on an unaware one.
-STALK_SEEK = True          # nothing to farm / fight: go after the nearest unaware lone house bot
-STALK_FLANK = True         # an unaware one farther than STALK_OPEN_M and facing us: circle behind it first
+STALK_SEEK = False         # #27 4.29 (no clear change). Nothing to farm / fight: go after the nearest unaware lone house bot
+STALK_FLANK = False        # #27 off. An unaware one farther than STALK_OPEN_M and facing us: circle behind it first
 STALK_MAX_M = 220          # seek mechs up to this far (tracked positions are real for 5 s after sight)
 STALK_OPEN_M = 70          # open fire anyway once this close
 STALK_BEHIND_M = 60        # flank point: this far behind its torso facing

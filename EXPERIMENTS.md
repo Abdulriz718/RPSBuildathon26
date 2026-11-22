@@ -593,4 +593,29 @@ Practice sim, 96 paired: seek -0.09 +-0.09, flank -0.07 +-0.10, both -0.11 +-0.1
 in the sim (its bot dies ~50 s and is always fighting or farming), and non-hunter kills fell 35 -> 31 with both on.
 The real bot lives far longer, so it has more idle time; only the server can tell.
 
-| 27 | | | #26 + STALK_SEEK + STALK_FLANK | | builders-4 |
+| 27 | | | #26 + STALK_SEEK + STALK_FLANK | 4.29 (builders-4) | no clear change vs 4.35; off (back to #26) |
+
+## Aiming / shooting audit (no build)
+
+Hit rate (practice sim, 48): normal hunters 86%, erratic (jumps, jets, quick flips) 85%, erratic + sidestepping
+bullets 78%. Share of ticks with a mech target (24 matches): firing 41%, gun reloading 27%, target behind cover 25%,
+ready but aim not on target yet 3%, other 4% (erratic + dodging: 38 / 29 / 24 / 3 / 7).
+Conclusion: aim and trigger discipline are not the bottleneck; reloads (mechanics: 12 rounds then 2.4 s) and line of
+sight are. A better aiming system can add only a few % damage.
+
+## Reload discipline (`RELOAD_SMART`, off, not submitted)
+
+Reload audit (24 matches): reloads with the target in sight 2065 ticks vs hidden 1011; with a 2nd weapon held, it
+fired during only 15% of in-sight reloads (lightning ready but out of its 45 m reach 707 ticks; laser ready 237).
+RELOAD_SMART: with cover nearby, hide at <= 3 rounds and reload there; top up at <= 6 rounds when nothing within
+150 m is being shot. Result: in-sight reloads 2065 -> 2118 (no change: most reloads happen on open ground with no
+cover pair), practice sim -0.07 +-0.06. Off.
+
+## Passive when hurt and alone (`HEAL_BETWEEN` + `HEAL_BEFORE_FARM`)
+
+User rule: below 60% HP with no mech in sight and no hits either way for 3 s, go passive: no drone/crate shooting
+(dealing damage resets the 5 s regen timer), break line of sight from the last threat or hold still, until 95% HP
+or until hit. Cubes, weapons and drops still allowed. HEAL used to rank below FARM, so it rarely fired on the farm
+base. Not sim-tested (submit and judge on the server). STALK and RELOAD_SMART off.
+
+| 28 | | | #26 + HEAL_BETWEEN (60% -> 95%) before farming | | builders-4 |
