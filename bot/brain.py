@@ -754,6 +754,8 @@ class Brain:
         if duel_evasion:
             mx, my, jump, boost = defense.duel_move(
                 obs, (mx, my, jump, boost), self.world, self.cfg)
+        if config.ZIGZAG_UNDER_FIRE:
+            mx, my, jump, boost = self.zigzag(obs, target, t, mx, my, jump, boost)
         act.update(move=[mx, my], boost=boost, jump=jump)
 
         # torso
@@ -819,6 +821,119 @@ class Brain:
         mf.draw.label(f"{mode} {tgt} | {me['hp']:.0f}/{me['max_hp']:.0f} c{me['cubes']}")
         mf.draw.text(" ".join(weapons) + f" | fire {'G' if fire[0] else '-'}{'2' if len(fire) > 1 and fire[1] else '-'}"
                      + (" HIDE" if hide else "") + (" REC" if self.recovering else ""))
+
+    # ---- play styles (config.STYLE) ---------------------------------------------------------------------------
+    def style_fight(self, me, target, t):
+        """Unit move while fighting for STYLE kite/rush/roof, or None for the default (cover peek / strafe)."""
+        self.style_boost = False
+        style = config.STYLE
+        if style not in ("kite", "rush", "roof"):
+            return None
+        x, y = me["pos"][0], me["pos"][1]
+        dx, dy = target.pos[0] - x, target.pos[1] - y
+        d = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / d, dy / d
+        sx, sy = self.strafe(me, target, t)
+        if style == "roof" and self.on_any_roof(me):
+            return 0.0, 0.0  # hold the high ground; the torso keeps shooting
+        if style == "roof":
+            return None
+        if style == "kite":
+            if d < config.KITE_MIN_M:
+                mx, my = -ux + sx * 0.4, -uy + sy * 0.4
+                self.style_boost = me["energy"] > config.KITE_BOOST_ENERGY
+            elif d > config.KITE_MAX_M:
+                mx, my = ux + sx * 0.5, uy + sy * 0.5
+            else:
+                return sx, sy
+        else:  # rush
+            if d > config.RUSH_RANGE_M:
+                mx, my = ux + sx * 0.5, uy + sy * 0.5
+                self.style_boost = me["energy"] > config.RUSH_BOOST_ENERGY
+            else:
+                return sx, sy
+        if not self.nav.walkable_xy(x + mx * config.STRAFE_PROBE_M, y + my * config.STRAFE_PROBE_M):
+            return sx, sy
+        n = math.hypot(mx, my) or 1.0
+        return mx / n, my / n
+
+    def on_any_roof(self, me):
+        return me["pos"][2] - self.world.ground(me["pos"][0], me["pos"][1]) > 3
+
+    def style_roof_spot(self, obs, t):
+        """Nearest climbable roof at least ROOF_STYLE_MIN_H tall, inside the next circle. Cached ROOF_STYLE_CACHE_S."""
+        if self.roof_spot is not None and t - self.roof_spot[0] < config.ROOF_STYLE_CACHE_S:
+            return self.roof_spot[1]
+        me = obs["self"]
+        x, y = me["pos"][0], me["pos"][1]
+        z = obs["zone"]
+        nav, w = self.nav, self.world
+        best = None
+        r = int(config.ROOF_STYLE_SEARCH_M / config.NAV_CELL)
+        ci, cj = nav.to_cell(x, y)
+        for j in range(max(0, cj - r), min(nav.cny, cj + r + 1), 2):
+            for i in range(max(0, ci - r), min(nav.cnx, ci + r + 1), 2):
+                c = j * nav.cnx + i
+                if not nav.roof[c] or nav.Bl[c]:
+                    continue
+                px, py = nav.to_xy(i, j)
+                if math.hypot(px - z["next_center"][0], py - z["next_center"][1]) > z["next_radius"] * 0.85:
+                    continue
+                h = nav.Hl[c] - w.ground(px, py)
+                if h < config.ROOF_STYLE_MIN_H or h > config.ROOF_MAX_CLIMB_M:
+                    continue
+                d = math.hypot(px - x, py - y)
+                if best is None or d < best[0]:
+                    if nav.roof_reachable((px, py)):
+                        best = (d, (px, py, nav.Hl[c]))
+        self.roof_spot = (t, None if best is None else best[1])
+        return self.roof_spot[1]
+
+    def hunt_point(self, obs, t):
+        """STYLE assassin: head for the latest fight or gunshot we heard; else roam the safe circle."""
+        x, y = obs["self"]["pos"][0], obs["self"]["pos"][1]
+        shot = self.track.recent_shot_bearing(config.ASSASSIN_SOUND_S)
+        if shot is None:
+            for snd in obs["sounds"]:
+                if snd["kind"] in config.DANGER_SOUNDS:
+                    shot = snd["bearing"]
+                    break
+        if shot is not None:
+            px, py = x + 60 * math.cos(shot), y + 60 * math.sin(shot)
+            return self.nav.nearest_walkable(px, py)
+        return self.roam_point(obs, t)
+
+    def zigzag(self, obs, target, t, mx, my, jump, boost):
+        """Being shot at (hit recently, or a shot about to land): weave side to side across the attacker's line,
+        flipping every ZIGZAG_S, keep some of the intended movement, and hop with a short jet burst now and then."""
+        me = obs["self"]
+        hurt = self.track.last_damage
+        bearing = None
+        if hurt is not None and t - hurt[0] <= config.ZIGZAG_HURT_S:
+            bearing = hurt[1]
+        else:
+            incoming = self.weapons.dodge(obs, target, self.world)
+            if incoming is not None:
+                bearing = math.atan2(-incoming[0], incoming[1])  # dodge gives the sidestep; shots come across it
+        if bearing is None:
+            return mx, my, jump, boost
+        if t - self.zig_t >= config.ZIGZAG_S:
+            self.zig_sign, self.zig_t = -self.zig_sign, t
+        px, py = -math.sin(bearing) * self.zig_sign, math.cos(bearing) * self.zig_sign
+        x, y = me["pos"][0], me["pos"][1]
+        if not self.nav.walkable_xy(x + px * config.STRAFE_PROBE_M, y + py * config.STRAFE_PROBE_M):
+            self.zig_sign, self.zig_t = -self.zig_sign, t
+            px, py = -px, -py
+        zx, zy = px + mx * config.ZIGZAG_KEEP, py + my * config.ZIGZAG_KEEP
+        n = math.hypot(zx, zy) or 1.0
+        mx, my = zx / n, zy / n
+        if me["grounded"] and t >= self.next_hop and me["energy"] >= config.ZIGZAG_HOP_ENERGY:
+            jump = True
+            self.next_hop = t + config.ZIGZAG_HOP_EVERY_S
+            self.hop_until = t + config.ZIGZAG_JET_S
+        if not me["grounded"] and t < self.hop_until:
+            boost = True  # a little lift off the jump
+        return mx, my, jump, boost
 
     def dodge_step(self, obs, dx, dy):
         """Pick the side of (dx, dy) that's walkable, open and in the zone."""
