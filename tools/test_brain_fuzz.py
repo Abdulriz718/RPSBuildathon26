@@ -46,6 +46,9 @@ def mutate(obs, rng):
     if rng.random() < 0.3:
         o["events"] = list(o["events"]) + [{"type": "damaged", "amount": 50, "weapon": "gun",
                                             "bearing": 1.0, "by": rng.choice([None, 5, 99])}]
+    if rng.random() < 0.1:  # AUTO_FFA input: kill events (odd targets too) and a falling alive count
+        o["events"] = list(o["events"]) + [{"type": "kill", "target": rng.choice([None, 5, 104, "x"])}]
+        o["alive"] = rng.randint(1, 16)
     if rng.random() < 0.2:
         o["mechs"] = []
     if rng.random() < 0.05:
@@ -61,8 +64,9 @@ def main():
     rng = random.Random(7)
     modes, failures = Counter(), Counter()
     times = []
-    for mode_setting in ("farm", "ffa"):
-        config.MODE = mode_setting
+    for mode_setting in ("farm", "ffa", "auto"):
+        config.MODE = "farm" if mode_setting == "auto" else mode_setting
+        config.AUTO_FFA = mode_setting == "auto"
         for run in range(4):
             brain = Brain(hello)
             for obs in observations:

@@ -57,6 +57,9 @@ def engage(me, target, world, *, sim_step=0.0):
         if can_reload:
             action["reload"] = True
         return action
+    if (config.FIRE_MAX_FLIGHT_S is not None and flight > config.FIRE_MAX_FLIGHT_S
+            and abs(target.vel[2]) < config.FIRE_AIRBORNE_VZ):
+        return action  # a long shot at a grounded target: it can sidestep; wait for a closer or airborne shot
     lead = tuple(p + v * flight for p, v in zip(future_center, target.vel))
     if not world.los(muzzle, lead):
         if can_reload:
@@ -190,6 +193,10 @@ class Weapons:
 
     def decide(self, me, target, world):
         action = engage(me, target, world, sim_step=self.sim_step)
+        # engage() decided the gun trigger against the torso's *actual* aim, so it stays valid whatever we aim next:
+        # with COMBINED_FIRE the gun keeps shooting alongside lightning and the laser instead of going quiet.
+        gun_slot = next((i for i, w in enumerate(me["weapons"]) if w and w["kind"] == "gun"), None)
+        gun_fire = gun_slot is not None and bool(action["fire"][gun_slot])
         muzzle = (*me["pos"][:2], me["pos"][2] + me["stats"]["muzzle_height"])
         primary = None
         for slot, weapon in enumerate(me["weapons"]):
@@ -242,15 +249,25 @@ class Weapons:
                     if charge:
                         action.update(aim=aim, fire=[False, False])
                         action["fire"][slot] = can_hold and not (charge >= stats["charge"] and aligned)
+                        if config.COMBINED_FIRE and gun_fire:
+                            action["fire"][gun_slot] = True
                         return action
                     shot = (self._score(kind, stats, target), aim, aligned)
             if primary is None or shot[0] > primary[0]:
                 primary = (*shot, slot)
         if primary is not None:
             _, aim, fire, slot = primary
+            kind = me["weapons"][slot]["kind"]
+            if config.COMBINED_FIRE and kind == "mortar" and gun_fire:
+                return action  # the gun can hit right now: keep shooting it rather than lob a slow shell
+            if config.COMBINED_FIRE and kind == "lightning":
+                action["fire"][slot] = fire  # lightning only needs yaw in its cone: keep the gun's aim, fire both
+                return action
             action["aim"] = aim
             action["fire"] = [False, False]
             action["fire"][slot] = fire
+            if config.COMBINED_FIRE and kind == "laser" and gun_fire:
+                action["fire"][gun_slot] = True
         return action
 
     def dodge(self, obs, target, world):
