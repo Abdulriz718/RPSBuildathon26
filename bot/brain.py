@@ -329,6 +329,45 @@ class Brain:
                 best = (d, p)
         return None if best is None else (best[1][0], best[1][1])
 
+    def forget_broken_crates(self, obs):
+        """A remembered crate that is in plain view but not listed is gone (we or someone broke it)."""
+        me = obs["self"]
+        listed = {c["id"] for c in obs["crates"]}
+        vis = self.cfg["vision"]
+        eye = (me["pos"][0], me["pos"][1], me["pos"][2] + me["stats"]["eye_height"])
+        for iid, (typ, _, p, _) in list(self.loot.items.items()):
+            if typ != "crate" or iid in listed:
+                continue
+            d = hdist(p, eye)
+            if d > vis["range"] - 10:
+                continue
+            off = abs(math.remainder(math.atan2(p[1] - eye[1], p[0] - eye[0]) - me["aim"][0], math.tau))
+            if (d <= vis["near_range"] - 5 or off < math.radians(vis["fov_deg"]) / 2 - 0.1)                     and self.world.los(eye, (p[0], p[1], p[2] + 1.2)):
+                del self.loot.items[iid]
+
+    def crate_goal(self, obs):
+        """(goal_xy, crate target to shoot or None) for the nearest remembered ground crate, or None."""
+        me = obs["self"]
+        pos = me["pos"]
+        best = None
+        for iid, (typ, _, p, hp) in self.loot.items.items():
+            if typ != "crate" or p[2] - self.world.ground(p[0], p[1]) > 3:
+                continue
+            d = hdist(p, pos)
+            if d > config.CRATE_HUNT_M or not self.in_safe(obs, p, config.LOOT_ZONE_FRAC):
+                continue
+            if best is None or d < best[0]:
+                best = (d, iid, p, hp)
+        if best is None:
+            return None
+        d, iid, p, hp = best
+        if d < config.CRATE_SHOOT_M:
+            crate = loot.crate_target({"id": iid, "pos": p, "hp": hp}, self.crate_dims)
+            muzzle = (pos[0], pos[1], pos[2] + me["stats"]["muzzle_height"])
+            if self.world.los(muzzle, (p[0], p[1], p[2] + crate.height / 2)):
+                return (pos[0], pos[1]), crate
+        return (p[0], p[1]), None
+
     @staticmethod
     def has_laser(me):
         return any(w and w["kind"] == "laser" for w in me["weapons"])
@@ -419,6 +458,8 @@ class Brain:
         self.track.update(obs)
         self.weapons.update(obs)
         self.loot.update(obs)
+        if config.CRATE_HUNT:
+            self.forget_broken_crates(obs)
         act = {}
 
         for e in obs["events"]:
@@ -482,6 +523,11 @@ class Brain:
                 target = threat
 
         wgoal = None if hurry or self.recovering else self.weapon_goal(obs, mech)
+        crgoal = None
+        if (config.CRATE_HUNT and not ffa and not hurry and not self.recovering and not self.has_laser(me)
+                and t < config.CRATE_HUNT_UNTIL_S and t - self.last_hurt >= config.CRATE_CALM_S
+                and not (visible_mech and hdist(mech.pos, (x, y)) < config.CRATE_FIGHT_M)):
+            crgoal = self.crate_goal(obs)
         cgoal = None if hurry else self.cube_goal(obs, hdist(target.pos, (x, y)) if target is not None else None)
         roof_goal = None
         goal = zgoal
@@ -522,6 +568,10 @@ class Brain:
                 act["take"] = wgoal[0]
                 if wgoal[2] is not None:
                     act["drop"] = wgoal[2]
+        elif crgoal is not None:
+            mode, (goal, shoot) = "CRATE", crgoal
+            target = shoot
+            stand = shoot is not None
         elif self.healing and not ffa:
             mode, hide = "HEAL", True
             foe = threat or mech
@@ -610,7 +660,7 @@ class Brain:
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
-        elif mode in ("FIGHT", "DROP", "HOLD", "LOOT", "CUBES") or (mode != "ZONE" and (ffa or late)):
+        elif mode in ("FIGHT", "DROP", "HOLD", "LOOT", "CUBES", "CRATE") or (mode != "ZONE" and (ffa or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge

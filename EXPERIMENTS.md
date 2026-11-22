@@ -325,4 +325,21 @@ fire (dealing damage resets regen too) and reload, until 95% HP. Any damage take
 - Fixed version, 12 matches instrumented: 8 heal spells, typically +10 to +40% HP before a hunter finds us.
 - Practice sim, 144 paired: start 70% **+0.09 +-0.05**, start 90% +0.08 +-0.07. Small, but no harm.
 
-| 11 | | | 3.40 behaviour + HEAL_BETWEEN (start 70%, stop 95%, calm 3 s) | | |
+| 11 | | | 3.40 behaviour + HEAL_BETWEEN (start 70%, stop 95%, calm 3 s), commit 372872f | 3.27 | inconclusive: within noise of 3.40 |
+
+## Crate hunting for a laser (`CRATE_HUNT`, brain.py CRATE mode)
+
+Crates (36 per match, 300 HP, 50% weapon drop) were only shot when idle: HOLD mode, drones first, within 90 m,
+before 150 s. CRATE mode: while we hold no laser, before 240 s, nothing hit us for 2 s and no visible mech within
+100 m, walk to the nearest remembered ground crate (up to 200 m, inside 90% of the next circle) and shoot it from
+60 m. WEAPON mode, earlier in the cascade, picks up the drop (laser bonus 70 m).
+
+Bug fixed on the way: a crate broken from range stayed in memory until we walked within 20 m, so the bot could stand
+shooting at nothing. Now a remembered crate in plain view (in FOV or near range, line of sight) that isn't listed
+is forgotten.
+
+Not testable in the sims (no crates). Checked on the recorded stream plus a synthetic setup: walks to an 80 m crate,
+stands and fires on 29/30 ticks at 30 m, forgets it once gone. `HEAL_BETWEEN` is off in this build so crates are
+measured alone against 3.40.
+
+| 12 | | | 3.40 behaviour + CRATE_HUNT (HEAL off) | | |

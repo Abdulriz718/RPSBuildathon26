@@ -145,10 +145,19 @@ AUTO_FFA_MAX_T = 200.0    # stop checking later: zone deaths start to muddy the 
 
 # Heal between kills (brain.py HEAL mode): when hurt between fights, break line of sight and
 # hold fire (dealing damage also resets the regen timer) until healed. Taking damage ends it: we fight back.
-HEAL_BETWEEN = True   # practice sim +0.09 +-0.05 (144 paired); server test pending
+HEAL_BETWEEN = False  # server 3.27 (#11), within noise of 3.40; off while crates are tested alone
 HEAL_START = 0.70          # start below this HP fraction...
 HEAL_DONE = 0.95           # ...and keep healing until this
 HEAL_CALM_S = 3.0          # start only after this long with no hits either way and no mech in sight
+
+# Crate hunting for a laser (brain.py CRATE mode): crates drop a weapon half the time, and a laser is our biggest
+# lever. While we hold no laser and nobody is in sight close by, go break the nearest remembered ground crate;
+# WEAPON mode then picks up what falls out.
+CRATE_HUNT = True
+CRATE_HUNT_UNTIL_S = 240   # match time
+CRATE_HUNT_M = 200         # walk this far for a crate
+CRATE_FIGHT_M = 100        # a visible mech closer than this takes priority
+CRATE_CALM_S = 2.0         # ...as does anything that hit us this recently
 
 # Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
 WEAPON_GRAB = True
