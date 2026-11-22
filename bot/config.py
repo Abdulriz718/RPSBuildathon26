@@ -185,8 +185,8 @@ SLICE_LASER_PEEK = False
 # Farm-first (brain.py FARM mode): early on, snowball cubes (+4% HP and damage each, upgrades at 1/3/6/10).
 # Server: dropping drone farming cost -0.27 (#15), so farming pays on the real server.
 FARM = True
-FARM_UNTIL_S = 180         # farm before this match time...
-FARM_CUBES = 10            # ...while we hold fewer cubes than this (stat cap)
+FARM_UNTIL_S = 360         # farm before this match time... (#16: 180 scored 4.10; #17 tests 360)
+FARM_CUBES = 21            # ...while we hold fewer cubes than this (stats cap at 10, upgrades go on at 15, 21; #16 had 10)
 FARM_FIGHT_M = 90          # a visible mech closer than this takes priority
 FARM_CALM_S = 2.0          # ...as does a mech that hit us this recently
 FARM_MIN_HP = 0.35         # don't start on drones below this HP fraction
