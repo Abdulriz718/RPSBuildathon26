@@ -398,4 +398,14 @@ Mechanism screen, practice sim, 48 paired (rear dmg = share of damage taken in t
 Jitter makes us easier to hit (flipping more often than every 1.3 s means less net sideways speed): off.
 Memory + scanning are on for the next submission. Flags off still plays 24/24 identical to the 3.40 build.
 
-| 14 | | | 3.40 behaviour + THREAT_MEMORY + SCAN_ALWAYS | | |
+| 14 | | | 3.40 behaviour + THREAT_MEMORY + SCAN_ALWAYS | 3.38, 3.42 (resubmitted) | same as base; best so far |
+
+## Server noise is small: tune on the server
+
+Same commit (`296e04e`, #14) submitted twice: 3.38 and 3.42. Base-behaviour runs so far: 3.40, 3.33, 3.38, 3.42.
+Noise is about +-0.05, not the +-0.5 assumed earlier, so a change of 0.1 or more on the server is real.
+Plan: one setting per submission on the server, keep what goes up. Sim (96 paired) only orders the queue:
+no drone farming +0.09 +-0.05, laser detour bonus 120 m +0.05 +-0.04, strafe flip 1.8 s +0.05 +-0.10;
+aim tolerance 1.6 / 2.0, weapon swap 80 m, zone margin 0.9 and full-speed dodge were flat or worse.
+
+| 15 | | | #14 + NPC_FARM_M=0 (no drone farming) | | |
