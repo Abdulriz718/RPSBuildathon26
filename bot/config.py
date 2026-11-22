@@ -14,12 +14,20 @@ TRACK_SHOT_SOUNDS = frozenset({"gun", "mortar", "laser", "laser_charge", "lightn
 GUN_AIM_FRACTION = 1.3          # stay inside this fraction of the target's hit radius
 
 # Upgrade preference, best first. Unknown ids rank after these.
-UPGRADE_PRIORITY = (
+OFFENSE_FIRST = True  # #20: damage upgrades first (kills are what count: passive #19 lost 0.81)
+UPGRADE_PRIORITY_DEFENSE = (
     "armor", "plating", "gun_damage", "gun_rate", "gun_mag", "gun_velocity",
     "laser_damage", "laser_charge", "laser_pierce", "mortar_reload", "mortar_splash",
     "mortar_velocity", "lightning_range", "lightning_efficiency", "lightning_chain",
     "sensors", "nanites", "servos", "reactor", "jets", "capacitor", "gyros",
 )
+# gun_mag (+8 rounds, reload x0.8) = +31% sustained gun fire; gun_rate/gun_damage +15% each
+UPGRADE_PRIORITY_OFFENSE = (
+    "gun_mag", "laser_damage", "laser_charge", "gun_rate", "gun_damage", "lightning_efficiency",
+    "mortar_reload", "lightning_range", "gun_velocity", "lightning_chain", "mortar_splash", "mortar_velocity",
+    "laser_pierce", "armor", "plating", "nanites", "sensors", "servos", "reactor", "jets", "capacitor", "gyros",
+)
+UPGRADE_PRIORITY = UPGRADE_PRIORITY_OFFENSE if OFFENSE_FIRST else UPGRADE_PRIORITY_DEFENSE
 COUNTERS = {"laser": "mortar", "mortar": "lightning", "lightning": "laser"}
 COUNTER_BONUS = 1.35
 COUNTER_PENALTY = 0.7
@@ -195,7 +203,7 @@ FARM_NPC_M = 150           # ...for a drone (2 cubes) (250 tried: no gain in sim
 FARM_CRATE_M = 120         # ...for a crate (1 cube) (200 tried: no gain in sim)
 FARM_SHOOT_M = 60          # stand and shoot drones/crates from this range (with line of sight)
 FARM_COST = {"cube": 0.5, "npc": 0.8, "crate": 1.0}  # metres-of-walk multiplier per kind (lower = preferred)
-FARM_ROOF_CRATES = True    # roof crates too: shoot from where we stand if we can see one, else climb (ROOF_COST_M extra)
+FARM_ROOF_CRATES = False   # off with #19 (never measured alone). Roof crates too: shoot from where we stand if we can see one, else climb (ROOF_COST_M extra)
 FARM_ROOF_CLIMB = False    # ...and climb for ones we can't shoot from here. Harness: climbing broke 1 of 12 targets, ~10 s/match spent
 FARM_SEEK = False          # sim: cubes 2.5 -> 1.6, died sooner (runs into house bots). Nothing known to farm: walk to the nearest unexplored patch of the safe zone (SEEK)
 FARM_SEEK_CELL_M = 50      # patch size
@@ -207,7 +215,7 @@ FARM_SEEK_REPLAN_S = 15.0  # pick a new patch at least this often
 # mech (ffa_target); break line of sight from everyone else (AVOID); keep farming when nobody is near. Practice
 # survivors at 8:00 are ranked by HP after the zone closes (~6:55), so surviving with more HP than the house bots
 # could place high without kills. A score near 0 means real hunters find and kill a passive bot.
-SURVIVE = True
+SURVIVE = False   # #19 scored 3.29 (-0.81): real hunters find a passive bot; kills are what count
 
 # Awareness (brain.py). The server keeps reporting a mech's real position for vision.memory_s (5 s) after it
 # leaves view; these cover what happens after that, plus where the torso looks.
@@ -259,7 +267,7 @@ CUBE_SAFE_M = 60           # "nobody close" = our target is farther than this
 CUBE_FIGHT_M = 12          # mid-fight, still grab cubes this close
 
 # Fire the gun together with lightning/laser, and only lob mortars when the gun can't hit (combat.py)
-COMBINED_FIRE = False  # added after 3.40, was on in #9-#12; practice sim: -0.01
+COMBINED_FIRE = True   # #20 offense-first: gun keeps firing alongside laser/lightning (was on in #9-#12, off since)
 
 # Abdul's requests (not sim-tested by request):
 # 1. under fire: zig-zag across the attacker's line and hop with short jet bursts
