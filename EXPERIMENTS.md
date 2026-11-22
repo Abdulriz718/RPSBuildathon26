@@ -232,6 +232,37 @@ produced observations in all eight movement directions. Direction coverage is
 uneven. Candidate farm front and front-left had 30 and 32 pressured ticks.
 
 Decision: leave `DUEL_EVASION` off by default. The two seed clusters show lower
-farm placement and higher FFA placement. No practice entry was submitted.
+farm placement and higher FFA placement.
 Local checks passed: 17 focused tests, hardening, replay benchmark, fuzz with
 the candidate enabled, and 300/300 protocol observations answered on time.
+
+Practice follow-up (team-reported): the next submission scored **3.17**,
+**0.23 below 3.4**. The checked-in `c3ef5f8` config has `DUEL_EVASION=False`.
+The scorer's submitted SHA and flag setting are unconfirmed, so the result is
+recorded without attributing the change to evasion. **3.4 remains the best
+confirmed score.**
+
+## New cycle, Phase 3 — offline movement tuning
+
+Farm mode on `c3ef5f8`. Training seeds 1 and 5335629, holdout seeds 271828 and
+7813031. Each row represents 8 arenas and 32 expert duels. The higher reserve
+candidate changed only the Phase 2 jet energy reserve from 25 to 45. It tied the
+original evasion candidate on training, so the original advanced to holdout.
+
+| Split and setting | Mean arena points | Duel wins | Damage-free pressured ticks | Jet metres/energy | No zone death |
+|---|---:|---:|---:|---:|---:|
+| Training, default | 7.375 | 16/32 | 92.03% | 90.78/153.00 | 8/8 |
+| Training, evasion | 7.125 | 21/32 | 93.72% | 128.92/222.00 | 8/8 |
+| Training, evasion with reserve 45 | 7.125 | 21/32 | 93.72% | 128.92/222.00 | 8/8 |
+| Holdout, default | 8.625 | 17/32 | 94.46% | 275.01/463.50 | 8/8 |
+| Holdout, evasion | 8.875 | 22/32 | 95.52% | 302.975/525.00 | 8/8 |
+
+Evasion gained five duel wins on each split and raised jet energy use. Its arena
+placement changed by -0.25 on training and +0.25 on holdout. The default passed
+the selection gate because the evasion candidate failed to improve both splits.
+These are simulated placements with a small number of distinct arena seeds.
+The official record remains 3.4 followed by 3.17. No submission was made.
+
+Reproduce with `python tools/bench.py --tune-movement --seeds 1 5335629 --holdout-seeds 271828 7813031 --workers 4`.
+The replay benchmark measured 1.88 ms p99 with zero fallbacks. All 17 unit tests
+passed and the protocol checker received all 300 answers on time.

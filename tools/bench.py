@@ -49,24 +49,66 @@ def match_suite(seeds, workers, mode, overrides):
     def rate(a, b):
         return a / b if b else None
     score = sum(scores) / len(scores)
-    print(json.dumps(dict(mode=mode, overrides=overrides, seeds=seeds, arena_points=scores,
+    return dict(mode=mode, overrides=overrides, seeds=seeds, arena_points=scores,
                           overall_score=score, official_reference=3.4, zone_survival_rate=sum(zone)/len(zone),
                           jetpack_efficiency=rate(gain, energy), jet_metres=gain, jet_energy=energy,
                           directional_evasion_breakdown={d: [avoided[d], directions[d]] for d in directions},
                           per_weapon=weapons, duel_wins=duel_wins, duel_count=len(jobs)-len(scores),
-                          **{"1v1_evasion_rate":rate(sum(avoided.values()), sum(directions.values()))})))
+                          **{"1v1_evasion_rate":rate(sum(avoided.values()), sum(directions.values()))})
+
+
+def tune_movement(training, holdout, workers):
+    candidates = (
+        ("baseline", {}),
+        ("phase2", {"DUEL_EVASION": True}),
+        ("more_jet_reserve", {"DUEL_EVASION": True, "DUEL_JET_RESERVE": 45.0}),
+    )
+    training_results = {}
+    for name, overrides in candidates:
+        result = match_suite(training, workers, "farm", overrides)
+        training_results[name] = result
+        print(json.dumps({"split": "training", "candidate": name, **result}), flush=True)
+
+    candidate = max(candidates[1:], key=lambda item: training_results[item[0]]["overall_score"])
+    holdout_results = {}
+    for name, overrides in (candidates[0], candidate):
+        result = match_suite(holdout, workers, "farm", overrides)
+        holdout_results[name] = result
+        print(json.dumps({"split": "holdout", "candidate": name, **result}), flush=True)
+
+    name = candidate[0]
+    training_delta = training_results[name]["overall_score"] - training_results["baseline"]["overall_score"]
+    baseline = holdout_results["baseline"]
+    tested = holdout_results[name]
+    holdout_delta = tested["overall_score"] - baseline["overall_score"]
+    qualifies = (training_delta > 0 and holdout_delta > 0
+                 and tested["duel_wins"] >= baseline["duel_wins"]
+                 and tested["zone_survival_rate"] >= baseline["zone_survival_rate"])
+    print(json.dumps(dict(candidate=name, training_delta=training_delta, holdout_delta=holdout_delta,
+                          selected_for_further_testing=name if qualifies else "baseline")), flush=True)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repeat", type=int, default=3)
     ap.add_argument("--matches", action="store_true")
+    ap.add_argument("--tune-movement", action="store_true")
+    ap.add_argument("--holdout-seeds", nargs="+", type=int, default=[271828, 7813031])
     ap.add_argument("--seeds", nargs="+", type=int, default=[1])
     ap.add_argument("--random-seeds", type=int, default=1)
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--modes", nargs="+", choices=("farm", "ffa"), default=["farm", "ffa"])
     ap.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE")
     args = ap.parse_args()
+    if args.tune_movement:
+        if args.matches or args.set or args.workers < 1:
+            ap.error("movement tuning requires positive workers and uses its own match presets")
+        if (set(args.seeds) & set(args.holdout_seeds)
+                or len(set(args.seeds)) != len(args.seeds)
+                or len(set(args.holdout_seeds)) != len(args.holdout_seeds)):
+            ap.error("training and holdout seeds must be unique and disjoint")
+        tune_movement(args.seeds, args.holdout_seeds, args.workers)
+        return
     if args.matches:
         if args.workers < 1 or args.random_seeds < 0:
             ap.error("invalid worker or random seed count")
@@ -74,7 +116,7 @@ def main():
         from duel import parse_overrides
         overrides = parse_overrides(args.set)
         for mode in args.modes:
-            match_suite(seeds, args.workers, mode, overrides)
+            print(json.dumps(match_suite(seeds, args.workers, mode, overrides)), flush=True)
         return
     if args.repeat < 1:
         ap.error("repeat must be at least 1")
