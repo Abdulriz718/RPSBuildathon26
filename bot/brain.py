@@ -525,6 +525,8 @@ class Brain:
         if duel_evasion:
             mx, my, jump, boost = defense.duel_move(
                 obs, (mx, my, jump, boost), self.world, self.cfg)
+        if config.ZONE_EDGE_AVOIDANCE and (mx or my):
+            mx, my = self.zone_edge_move(obs, mx, my)
         act.update(move=[mx, my], boost=boost, jump=jump)
 
         # torso
@@ -590,6 +592,53 @@ class Brain:
         mf.draw.label(f"{mode} {tgt} | {me['hp']:.0f}/{me['max_hp']:.0f} c{me['cubes']}")
         mf.draw.text(" ".join(weapons) + f" | fire {'G' if fire[0] else '-'}{'2' if len(fire) > 1 and fire[1] else '-'}"
                      + (" HIDE" if hide else "") + (" REC" if self.recovering else ""))
+
+    def zone_edge_move(self, obs, mx, my):
+        me, zone = obs["self"], obs["zone"]
+        x, y, z = me["pos"]
+        speed = me["stats"]["walk_speed"]
+        horizon = config.ZONE_EDGE_LOOKAHEAD_S
+        remaining = max(0., zone["shrink_end"] - max(obs["t"], zone["shrink_start"]))
+        fraction = min(1., max(0., obs["t"] + horizon - max(obs["t"], zone["shrink_start"])) / max(remaining, 1e-6))
+        cx, cy = (a + fraction * (b - a) for a, b in zip(zone["center"], zone["next_center"]))
+        radius = zone["radius"] + fraction * (zone["next_radius"] - zone["radius"])
+        margin = min(config.ZONE_EDGE_MARGIN_M, radius * config.ZONE_EDGE_RADIUS_FRACTION)
+        reach = horizon * speed
+        if math.hypot(x - cx, y - cy) + reach <= radius - margin:
+            return mx, my
+
+        def penalty(px, py):
+            dx, dy = cx - px, cy - py
+            distance = math.hypot(dx, dy)
+            edge = max(0., distance + margin - radius)
+            if not edge or not distance:
+                return edge
+            pinch = 0.
+            for enemy in obs["mechs"]:
+                if enemy["kind"] != "mech":
+                    continue
+                ex, ey = enemy["pos"][0] - px, enemy["pos"][1] - py
+                along = (ex * dx + ey * dy) / distance
+                if 0 < along < min(distance, reach + margin):
+                    lateral = abs(ex * dy - ey * dx) / distance
+                    pinch = max(pinch, config.ZONE_PINCH_WIDTH_M - lateral)
+            return edge + pinch
+
+        best = mx, my
+        cost = penalty(x + reach * mx, y + reach * my)
+        for angle in (math.pi / 4, -math.pi / 4, math.pi / 2, -math.pi / 2, math.pi):
+            dx = mx * math.cos(angle) - my * math.sin(angle)
+            dy = mx * math.sin(angle) + my * math.cos(angle)
+            px, py = x + reach * dx, y + reach * dy
+            candidate = penalty(px, py) + config.ZONE_EDGE_TURN_COST_M * (1 - math.cos(angle))
+            if candidate >= cost:
+                continue
+            if (self.world.in_bounds(px, py) and self.nav.walkable_xy(px, py)
+                    and abs(self.world.surface(px, py) - z) <= config.NAV_MAX_UP
+                    and self.world.los((x, y, z + me["stats"]["muzzle_height"]),
+                                       (px, py, z + me["stats"]["muzzle_height"]))):
+                best, cost = (dx, dy), candidate
+        return best
 
     def dodge_step(self, obs, dx, dy):
         """Pick the side of (dx, dy) that's walkable, open and in the zone."""
