@@ -986,6 +986,9 @@ class Brain:
         """Unit move while fighting for STYLE kite/rush/roof, or None for the default (cover peek / strafe)."""
         self.style_boost = False
         style = config.STYLE
+        brawl = config.LIGHTNING_FIRST and any(w and w["kind"] == "lightning" for w in me["weapons"])
+        if brawl:
+            style = "rush"
         if style not in ("kite", "rush", "roof"):
             return None
         x, y = me["pos"][0], me["pos"][1]
@@ -1006,7 +1009,7 @@ class Brain:
             else:
                 return sx, sy
         else:  # rush
-            if d > config.RUSH_RANGE_M:
+            if d > (config.LIGHTNING_BRAWL_M if brawl else config.RUSH_RANGE_M):
                 mx, my = ux + sx * 0.5, uy + sy * 0.5
                 self.style_boost = me["energy"] > config.RUSH_BOOST_ENERGY
             else:
