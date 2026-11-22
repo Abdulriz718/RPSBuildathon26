@@ -56,7 +56,7 @@ class FFABot:
         m.events = []
         cands = []
         for o in sim.mechs.values():
-            if o is m or not o.alive:
+            if o is m or not o.alive or o.kind != "mech":
                 continue
             d = math.dist(o.pos, m.pos)
             if d <= 200 and sim.sees(m, o):
@@ -143,10 +143,11 @@ def run_match(args):
         b = FFABot(sim, mm, skill, random.Random(seed * 97 + i))
         bots.append(b)
     sim.spawn_pickups(random.Random(seed * 7 + 1), nav, cfg["loot"]["floor_count"])
+    sim.spawn_drones(random.Random(seed * 3 + 2), nav, cfg["npc"]["count"])
     bot = Bot(hello)
     memory, last_obs_t = {}, -1.0
     modes = Counter()
-    while sim.t < max_t and ours.alive and sum(m.alive for m in sim.mechs.values()) > 1:
+    while sim.t < max_t and ours.alive and sum(m.alive and m.kind == "mech" for m in sim.mechs.values()) > 1:
         if sim.tick % 2 == 0:
             obs = sim.observe(ours, memory, last_obs_t)
             last_obs_t = sim.t
@@ -165,7 +166,7 @@ def run_match(args):
         sim.step()
     # placement
     if ours.alive:
-        alive = [m for m in sim.mechs.values() if m.alive]
+        alive = [m for m in sim.mechs.values() if m.alive and m.kind == "mech"]
         place = 1 + sum(1 for m in alive if m is not ours and m.hp > ours.hp)
     else:
         same_tick = [mid for (dt_, mid) in sim.deaths if abs(dt_ - ours.death_t) < 1e-9]
@@ -237,7 +238,7 @@ def main():
         variants = []
         for item in a.compare:
             label, _, rest = item.partition(":")
-            variants.append((label, D.parse_overrides([kv for kv in rest.split(",") if kv])))
+            variants.append((label, D.parse_overrides([kv for kv in D.split_top(rest) if kv])))
         compare(variants, a.n, a.seed, a.workers)
         return
     ov = D.parse_overrides(a.set)

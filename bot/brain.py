@@ -74,6 +74,9 @@ class Brain:
         self.threat = None  # last mech that hurt us or that we fought
         self.hurt_by = {}  # mech id -> last time it damaged us
         self.danger = []  # (time, world bearing) of fights we heard or saw that weren't aimed at us
+        self.zig_sign, self.zig_t = 1, -1e9  # zig-zag under fire
+        self.next_hop, self.hop_until = -1e9, -1e9  # little jump-and-jet hops under fire
+        self.roam = None  # (until, (x, y)) waypoint while searching for a laser
         self.anchor = None  # (circle, refresh time, position)
         # The map and nav grids are big and live all match: move them out of the GC's scans
         # so a collection can't stall a tick.
@@ -164,11 +167,15 @@ class Brain:
             if abs((aim[0] - to_us + math.pi) % (2 * math.pi) - math.pi) > math.radians(30):
                 if m.get("charging") or any(e for e in obs["beams"] if e.get("by") == m["id"]):
                     self.danger.append((t, math.atan2(m["pos"][1] - y, m["pos"][0] - x)))
+        if config.AVOID_PEOPLE:
+            for m in obs["mechs"]:
+                if m.get("kind") == "mech" and math.dist(m["pos"][:2], (x, y)) <= config.AVOID_PEOPLE_M:
+                    self.danger.append((t, math.atan2(m["pos"][1] - y, m["pos"][0] - x)))
         self.danger = [d for d in self.danger if t - d[0] <= config.DANGER_MEMORY_S][-32:]
 
     def away_from_danger(self, obs, goal):
         """Shift a holding goal away from recent fights, staying inside the next circle."""
-        if not config.AVOID_FIGHT_SOUNDS or not self.danger:
+        if not (config.AVOID_FIGHT_SOUNDS or config.AVOID_PEOPLE) or not self.danger:
             return goal
         me = obs["self"]
         x, y = me["pos"][0], me["pos"][1]
@@ -299,6 +306,41 @@ class Brain:
             return None
         return best[1], best[2], (1 if slot1 is not None else None)
 
+    def cube_goal(self, obs, fighting_d):
+        """Nearest remembered cube worth walking to: within CUBE_MAX_M when nobody is close, or within
+        CUBE_FIGHT_M (a few steps) even mid-fight, since the dead mech's cubes land where it fell."""
+        if not config.CUBE_COLLECT:
+            return None
+        pos = obs["self"]["pos"]
+        limit = config.CUBE_MAX_M if fighting_d is None or fighting_d > config.CUBE_SAFE_M else config.CUBE_FIGHT_M
+        best = None
+        for iid, (typ, _, p, _) in self.loot.items.items():
+            if typ != "cube" or abs(p[2] - pos[2]) > 4:
+                continue
+            d = hdist(p, pos)
+            if d <= limit and (best is None or d < best[0]):
+                best = (d, p)
+        return None if best is None else (best[1][0], best[1][1])
+
+    @staticmethod
+    def has_laser(me):
+        return any(w and w["kind"] == "laser" for w in me["weapons"])
+
+    def roam_point(self, obs, t):
+        """A waypoint inside the next circle to walk to while scanning for a laser; new one every LASER_ROAM_S."""
+        x, y = obs["self"]["pos"][0], obs["self"]["pos"][1]
+        if self.roam is None or t > self.roam[0] or hdist(self.roam[1], (x, y)) < 6:
+            z = obs["zone"]
+            cx, cy, r = z["next_center"][0], z["next_center"][1], z["next_radius"] * 0.7
+            k = int(t * 7) % 12
+            a = math.atan2(y - cy, x - cx) + (k - 6) * 0.35
+            px, py = x + config.LASER_ROAM_STEP_M * math.cos(a), y + config.LASER_ROAM_STEP_M * math.sin(a)
+            d = math.hypot(px - cx, py - cy)
+            if d > r:
+                px, py = cx + (px - cx) / d * r, cy + (py - cy) / d * r
+            self.roam = (t + config.LASER_ROAM_S, self.nav.nearest_walkable(px, py))
+        return self.roam[1]
+
     def pick_npc(self, me):
         if me["hp"] < me["max_hp"] * config.NPC_FARM_HP:
             return None
@@ -380,7 +422,7 @@ class Brain:
                 if e["by"] in self.track.targets:
                     self.threat = self.track.targets[e["by"]]
 
-        if config.AVOID_FIGHT_SOUNDS:
+        if config.AVOID_FIGHT_SOUNDS or config.AVOID_PEOPLE:
             self.note_danger(obs, t)
 
         late = config.ENDGAME and (obs["alive"] <= config.ENDGAME_ALIVE or t >= config.ENDGAME_T)
@@ -420,6 +462,7 @@ class Brain:
                 target = threat
 
         wgoal = None if hurry or self.recovering else self.weapon_goal(obs, mech)
+        cgoal = None if hurry else self.cube_goal(obs, hdist(target.pos, (x, y)) if target is not None else None)
         roof_goal = None
         goal = zgoal
         stand = hide = False
@@ -443,6 +486,8 @@ class Brain:
             mode = "AVOID"
             goal = self.retreat_goal(obs, threat, t)
             stand = all(self.hidden_from(me, enemy) for enemy in close_enemies)
+        elif cgoal is not None and (target is None or hdist(cgoal, (x, y)) <= config.CUBE_FIGHT_M):
+            mode, goal = "CUBES", cgoal
         elif wgoal is not None:
             mode, goal = "WEAPON", (wgoal[1][0], wgoal[1][1])
             if wgoal[1][2] - self.world.ground(wgoal[1][0], wgoal[1][1]) > 3:
@@ -456,6 +501,13 @@ class Brain:
             mode = "DISENGAGE"
             goal = self.retreat_goal(obs, target, t)
             stand = self.hidden_from(me, target)
+        elif (config.AVOID_PEOPLE and target is not None and target.kind == "mech"
+              and t - self.hurt_by.get(target.id, -1e9) > config.AVOID_PROVOKED_S
+              and hdist(target.pos, (x, y)) > config.AVOID_ENGAGE_M):
+            mode = "KEEPAWAY"
+            goal = self.retreat_goal(obs, target, t)
+            stand = self.hidden_from(me, target)
+            target = None  # don't provoke it
         elif target is not None:
             mode = "FIGHT"
             pair = self.fight_spot(obs, target, t)
@@ -474,6 +526,8 @@ class Brain:
         else:
             mode = "HOLD"
             goal = self.away_from_danger(obs, goal)
+            if config.LASER_ROAM and not self.has_laser(me) and not self.danger and t < config.LASER_ROAM_UNTIL_S:
+                mode, goal = "SEARCH", self.roam_point(obs, t)
             if (t < config.LOOT_UNTIL_S and not late and not self.recovering
                     and t - self.last_exchange > 3.0):
                 npc = None if ffa else self.pick_npc(me)
@@ -513,7 +567,7 @@ class Brain:
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
-        elif mode in ("FIGHT", "DROP", "HOLD", "LOOT") or (mode != "ZONE" and (ffa or late)):
+        elif mode in ("FIGHT", "DROP", "HOLD", "LOOT", "CUBES") or (mode != "ZONE" and (ffa or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge
@@ -522,13 +576,12 @@ class Brain:
                     if step is not None:
                         s = 1.0 if urgent else config.STRAFE_SPEED_FRACTION
                         mx, my = step[0] * s, step[1] * s
-        if duel_evasion:
-            mx, my, jump, boost = defense.duel_move(
-                obs, (mx, my, jump, boost), self.world, self.cfg)
+        if config.ZIGZAG_UNDER_FIRE:
+            mx, my, jump, boost = self.zigzag(obs, target, t, mx, my, jump, boost)
         act.update(move=[mx, my], boost=boost, jump=jump)
 
         # torso
-        act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and me["weapons"][1] is None), 0.0]
+        act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and not self.has_laser(me)), 0.0]
         if target is None and threat is not None and mode in ("RECOVER", "AVOID"):
             act["aim"] = [math.atan2(threat.pos[1] - y, threat.pos[0] - x), 0.0]  # never show our back
         elif (config.DEFENSIVE_EVASION and mode == "HOLD" and target is None
@@ -590,6 +643,38 @@ class Brain:
         mf.draw.label(f"{mode} {tgt} | {me['hp']:.0f}/{me['max_hp']:.0f} c{me['cubes']}")
         mf.draw.text(" ".join(weapons) + f" | fire {'G' if fire[0] else '-'}{'2' if len(fire) > 1 and fire[1] else '-'}"
                      + (" HIDE" if hide else "") + (" REC" if self.recovering else ""))
+
+    def zigzag(self, obs, target, t, mx, my, jump, boost):
+        """Being shot at (hit recently, or a shot about to land): weave side to side across the attacker's line,
+        flipping every ZIGZAG_S, keep some of the intended movement, and hop with a short jet burst now and then."""
+        me = obs["self"]
+        hurt = self.track.last_damage
+        bearing = None
+        if hurt is not None and t - hurt[0] <= config.ZIGZAG_HURT_S:
+            bearing = hurt[1]
+        else:
+            incoming = self.weapons.dodge(obs, target, self.world)
+            if incoming is not None:
+                bearing = math.atan2(-incoming[0], incoming[1])  # dodge gives the sidestep; shots come across it
+        if bearing is None:
+            return mx, my, jump, boost
+        if t - self.zig_t >= config.ZIGZAG_S:
+            self.zig_sign, self.zig_t = -self.zig_sign, t
+        px, py = -math.sin(bearing) * self.zig_sign, math.cos(bearing) * self.zig_sign
+        x, y = me["pos"][0], me["pos"][1]
+        if not self.nav.walkable_xy(x + px * config.STRAFE_PROBE_M, y + py * config.STRAFE_PROBE_M):
+            self.zig_sign, self.zig_t = -self.zig_sign, t
+            px, py = -px, -py
+        zx, zy = px + mx * config.ZIGZAG_KEEP, py + my * config.ZIGZAG_KEEP
+        n = math.hypot(zx, zy) or 1.0
+        mx, my = zx / n, zy / n
+        if me["grounded"] and t >= self.next_hop and me["energy"] >= config.ZIGZAG_HOP_ENERGY:
+            jump = True
+            self.next_hop = t + config.ZIGZAG_HOP_EVERY_S
+            self.hop_until = t + config.ZIGZAG_JET_S
+        if not me["grounded"] and t < self.hop_until:
+            boost = True  # a little lift off the jump
+        return mx, my, jump, boost
 
     def dodge_step(self, obs, dx, dy):
         """Pick the side of (dx, dy) that's walkable, open and in the zone."""

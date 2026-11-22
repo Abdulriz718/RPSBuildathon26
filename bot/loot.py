@@ -13,7 +13,7 @@ def take_nearby(obs, reach: float):
     x, y, z = me["pos"]
     held = {w["kind"] for w in me["weapons"] if w}
     for p in obs["pickups"]:
-        if (p["kind"] not in held and p["kind"] != "gun"
+        if (p["kind"] not in held and p["kind"] in config.WEAPON_RANK
                 and abs(p["pos"][2] - z) <= config.LOOT_VERTICAL_REACH_M
                 and math.dist(p["pos"][:2], (x, y)) <= reach):
             return p["id"]

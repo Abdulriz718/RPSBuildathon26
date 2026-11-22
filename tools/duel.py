@@ -271,6 +271,28 @@ def _sample_header():
         return json.loads(f.readline())
 
 
+def split_top(text, sep=","):
+    """Split on sep outside brackets/braces/quotes, so KEY={'a':1,'b':2},OTHER=3 stays two items."""
+    out, depth, quote, cur = [], 0, None, ""
+    for ch in text:
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == sep and depth == 0:
+            out.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    if cur:
+        out.append(cur)
+    return out
+
+
 def parse_overrides(items):
     out = {}
     for it in items or []:
