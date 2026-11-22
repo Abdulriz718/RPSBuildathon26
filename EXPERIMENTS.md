@@ -500,4 +500,11 @@ Why: the real 16-bot replay winner was a lightning brawler; the sim's weapon mod
 Sim, 48 (mechanism): lightning held 22/48 (was ~11), laser 11 (was ~21); score 1.85 (#20 ~2.06).
 Note: WEAPON_RANK/BONUS are computed at import, so `--set LIGHTNING_FIRST=False` does not switch them back.
 
-| 21 | | | #20 + LIGHTNING_FIRST (lightning > laser, brawl at 30 m with lightning) | | |
+| 21 | | | #20 + LIGHTNING_FIRST (lightning > laser, brawl at 30 m with lightning) | 4.13 | flat: 2nd-weapon choice does not decide matches; off |
+
+## Rush probe (`STYLE="rush"`)
+
+In FIGHT: close to 25 m (boost when energy > 30), then strafe; replaces cover peek / ranged strafe. Lightning-first
+off again, so the base is #20 (4.10). Never tested on the server; sim said -0.23 on the pre-farm base.
+
+| 22 | | | #20 + STYLE rush | | |

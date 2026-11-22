@@ -232,7 +232,7 @@ JUKE_NEAR_M = 15.0         # a new bullet this close to the target = it just fir
 
 # Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
 WEAPON_GRAB = True
-LIGHTNING_FIRST = True     # #21 probe: chase lightning over laser and brawl in its range (real FFA winner: lightning)
+LIGHTNING_FIRST = False    # #21 scored 4.13 (flat). Probe: chase lightning over laser and brawl in its range (real FFA winner: lightning)
 WEAPON_RANK = ({"mortar": 1, "laser": 2, "lightning": 3} if LIGHTNING_FIRST
                else {"mortar": 1, "lightning": 2, "laser": 3})   # swap up only to a higher rank
 WEAPON_BONUS = ({"lightning": 70, "laser": 30, "mortar": 0} if LIGHTNING_FIRST
@@ -294,7 +294,7 @@ LASER_ROAM_S = 12          # pick a new waypoint this often
 LASER_ROAM_STEP_M = 70     # waypoint distance
 
 # Play styles (brain.py style_fight / HOLD). "default" = cover peek and strafe at whatever range.
-STYLE = "default"          # "default", "kite", "rush", "roof", "assassin". kite: sim +0.35 but server 3.10 (sim had no trees)
+STYLE = "rush"             # #22 probe. "default", "kite", "rush", "roof", "assassin". kite: server 3.10; rush: sim -0.23, never on server
 KITE_MIN_M = 120           # kite: back off (with boost) when a target is closer than this...
 KITE_MAX_M = 170           # ...and close in when farther than this
 KITE_BOOST_ENERGY = 20
