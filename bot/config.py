@@ -139,7 +139,7 @@ FFA_FINISH_HP = 450       # ...or a lone visible mech below this HP
 FFA_FINISH_M = 90         # ...within this range
 # Switch farm -> ffa mid-match when mechs die that we never hit. Practice house bots only die to us,
 # so (deaths seen) - (our kill events) >= AUTO_FFA_DEATHS means a real free-for-all.
-AUTO_FFA = False
+AUTO_FFA = True       # practice sim: fires 2/144, -0.01; FFA sim: fires 109/120 by t=18 s
 AUTO_FFA_DEATHS = 2
 AUTO_FFA_MAX_T = 200.0    # stop checking later: zone deaths start to muddy the count
 
@@ -153,7 +153,7 @@ HEAL_CALM_S = 3.0          # start only after this long with no hits either way 
 # Crate hunting for a laser (brain.py CRATE mode): crates drop a weapon half the time, and a laser is our biggest
 # lever. While we hold no laser and nobody is in sight close by, go break the nearest remembered ground crate;
 # WEAPON mode then picks up what falls out.
-CRATE_HUNT = True
+CRATE_HUNT = False    # server 3.15 (#12), within noise of 3.40
 CRATE_HUNT_UNTIL_S = 240   # match time
 CRATE_HUNT_M = 200         # walk this far for a crate
 CRATE_FIGHT_M = 100        # a visible mech closer than this takes priority
@@ -168,6 +168,7 @@ WEAPON_SWAP_M = 45         # swap to a better weapon only this close
 WEAPON_FIGHT_M = 80        # with a visible mech closer than this...
 WEAPON_GRAB_IN_FIGHT_M = 20  # ...only fetch weapons within this
 SWEEP_FOR_WEAPONS = True   # turn the torso while walking until we hold a 2nd weapon
+SWEEP_UNTIL_LASER = False  # keep sweeping until we hold a laser (not just any 2nd weapon); off = 3.40 behaviour
 
 # Survival gameplans (brain.py). Off until they win in tools/ffa.py and tools/duel.py.
 AVOID_FIGHT_SOUNDS = False  # hold away from fights we hear/see that aren't aimed at us
@@ -189,13 +190,13 @@ ROOF_ENERGY_SPARE = 15     # energy to keep beyond the climb itself
 ROOF_REPLAN_S = 5.0
 
 # Cube collection (brain.py CUBES mode). Each cube: +4% max HP and damage (cap 10); kills drop victim cubes + 2.
-CUBE_COLLECT = True
+CUBE_COLLECT = False   # added after 3.40, was on in #9-#12; practice sim: no gain
 CUBE_MAX_M = 50            # walk this far for a cube when nobody is close
 CUBE_SAFE_M = 60           # "nobody close" = our target is farther than this
 CUBE_FIGHT_M = 12          # mid-fight, still grab cubes this close
 
 # Fire the gun together with lightning/laser, and only lob mortars when the gun can't hit (combat.py)
-COMBINED_FIRE = True
+COMBINED_FIRE = False  # added after 3.40, was on in #9-#12; practice sim: -0.01
 
 # Abdul's requests (not sim-tested by request):
 # 1. under fire: zig-zag across the attacker's line and hop with short jet bursts

@@ -674,7 +674,7 @@ class Brain:
         act.update(move=[mx, my], boost=boost, jump=jump)
 
         # torso
-        act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and not self.has_laser(me)), 0.0]
+        act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and (not self.has_laser(me) if config.SWEEP_UNTIL_LASER else me["weapons"][1] is None)), 0.0]
         if target is None and threat is not None and mode in ("RECOVER", "AVOID", "HEAL"):
             act["aim"] = [math.atan2(threat.pos[1] - y, threat.pos[0] - x), 0.0]  # never show our back
         elif (config.DEFENSIVE_EVASION and mode == "HOLD" and target is None
