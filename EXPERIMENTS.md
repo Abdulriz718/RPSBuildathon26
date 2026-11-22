@@ -352,4 +352,23 @@ out identical. Three changes made after 3.40 were on by default, so #9-#12 were 
 2nd weapon). With those off (`COMBINED_FIRE=False`, `CUBE_COLLECT=False`, new `SWEEP_UNTIL_LASER=False`): **24/24**
 identical, with `AUTO_FFA` on or off. Those are now the defaults.
 
-| 13 | | | exact 3.40 behaviour (24/24 identical in sim) + AUTO_FFA on (FFA detector for the final) | | |
+| 13 | | | exact 3.40 behaviour (24/24 identical in sim) + AUTO_FFA on (FFA detector for the final) | 3.33 | consistent with 3.40; keep as base |
+
+## Fight position scoring ("slicing the pie", `SLICE`, off)
+
+Every 0.3 s in FIGHT, score ~37 ground spots within 16 m: line of sight to the target, -150 per other known enemy
+that can see the spot, cover within 4 m, height, travel, range. Hide from all known enemies while reloading.
+Optional `SLICE_LASER_PEEK`: charge the laser out of sight.
+
+Mechanism check (12 practice-sim matches, share of FIGHT ticks where 2+ hunters can see us):
+
+| build | seen by 2+ | kills | decide p99 / max |
+|---|---|---|---|
+| base | 19% | 25 | 2.4 / 13.9 ms |
+| SLICE v1 (always go to best spot) | 26% | 23 | 6.6 / 8.4 ms |
+| v1 with crossfire 150, cover 30 | 26% | 22 | 7.3 / 8.9 ms |
+| v2 (relocate only when clearly better, else old peek/strafe) | 22% | 26 | 8.3 / 25.8 ms |
+
+It didn't reduce crossfire. In half of the crossfire ticks the bot had never seen the second hunter (outside the
+120-degree view), so no scoring can avoid it. v1 also stood still 74% of fight ticks, which made it easier to hit.
+Left off; not submitted.
