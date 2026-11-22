@@ -432,4 +432,51 @@ Lessons from #16 (4.10): power from cubes beats tactics; the sim undervalues the
 Sim can't see it (its bot dies around 50 s): identical matches. A flat server result would mean real matches rarely
 get past 180 s or 10 cubes.
 
-| 17 | | | #16 + FARM_UNTIL_S=360, FARM_CUBES=21 | | |
+| 17 | | | #16 + FARM_UNTIL_S=360, FARM_CUBES=21 | 4.06 | flat (4.10): farming time is not the limit |
+
+## Wider farm reach + SEEK (search unexplored patches)
+
+Wider reach: cubes 90 -> 150 m, drones 150 -> 250 m, crates 120 -> 200 m. SEEK: with nothing known to farm, walk to
+the nearest unexplored 50 m patch of the safe zone, torso sweeping.
+
+Practice sim, 48 matches (mechanism check; the sim has no crates):
+
+| build | cubes at end (mean) | survived (median) | rear dmg | score |
+|---|---|---|---|---|
+| #17 settings | 2.5 | 50 s | 23% | 2.08 |
+| wide reach + SEEK | 1.6 | 43 s | 29% | 1.46 |
+| wide reach only | 2.4 | 48 s | 26% | 1.92 |
+
+SEEK lowers cubes: wandering runs into house bots that start fights, so farming time is lost. Off.
+Wider reach doesn't add cubes in the sim (the hunter's arrival limits farming, not reach), but the real map has
+36 crates the sim lacks, so reach could matter more there. Candidate #18 = wide reach only.
+
+## Roof crates (`FARM_ROOF_CRATES`, `FARM_ROOF_CLIMB`)
+
+9 of the 36 crates are on roofs; FARM skipped them. Wider reach reverted to #17 values (no cube gain in sim).
+The sim has no crates, so a harness (scratch, passive house bots) placed 3 roof + 2 ground crates 30-110 m from our
+spawn in 8 matches of 150 s and counted crates broken:
+
+| version | roof broken / 24 | ground broken / 16 | notes |
+|---|---|---|---|
+| no roof crates (#17) | 0 | 11 | |
+| shoot roof crates seen within 60 m, never climb | 2 | 11 | no extra time |
+| shoot or climb (roof_step) | 4 (1 from a roof) | 11 | 12 climb targets; ~10 s/match on them, 40% airborne |
+
+Small lever: at most ~0.3-0.5 cubes per match. Build #18 = shoot-only (no climbing).
+
+| 18 | | | #17 + FARM_ROOF_CRATES (shoot visible roof crates, no climbing) | | |
+
+## Survival probe (`SURVIVE`)
+
+Question: can a bot that never starts fights survive to the zone close (~6:55) and the 8:00 clock, where survivors
+are ranked by HP? Our sim assumes hunters always know where we are, so it can't answer; the server can.
+SURVIVE: targets the FFA way (attackers in the last 6 s, or a lone mech under 450 HP within 90 m), breaks line of
+sight from everyone else, keeps farming when nobody is near. Built on #18 (roof crates shoot-only), never submitted.
+
+Practice sim, 48 (mechanism only): kills 2.1 -> 1.6, median death 50 -> 54 s, death quartiles [35,50,65] -> [34,54,85].
+
+Reading the server score: near 0-2 = real hunters find and kill a passive bot (go offense-first);
+about 4 = no change; 6+ = survival works, go all in on hiding and HP.
+
+| 19 | | | #18 + SURVIVE (never start fights) | | |

@@ -190,11 +190,24 @@ FARM_CUBES = 21            # ...while we hold fewer cubes than this (stats cap a
 FARM_FIGHT_M = 90          # a visible mech closer than this takes priority
 FARM_CALM_S = 2.0          # ...as does a mech that hit us this recently
 FARM_MIN_HP = 0.35         # don't start on drones below this HP fraction
-FARM_CUBE_M = 90           # walk this far for a cube
-FARM_NPC_M = 150           # ...for a drone (2 cubes)
-FARM_CRATE_M = 120         # ...for a ground crate (1 cube)
+FARM_CUBE_M = 90           # walk this far for a cube (150 tried: no gain in sim)
+FARM_NPC_M = 150           # ...for a drone (2 cubes) (250 tried: no gain in sim)
+FARM_CRATE_M = 120         # ...for a crate (1 cube) (200 tried: no gain in sim)
 FARM_SHOOT_M = 60          # stand and shoot drones/crates from this range (with line of sight)
 FARM_COST = {"cube": 0.5, "npc": 0.8, "crate": 1.0}  # metres-of-walk multiplier per kind (lower = preferred)
+FARM_ROOF_CRATES = True    # roof crates too: shoot from where we stand if we can see one, else climb (ROOF_COST_M extra)
+FARM_ROOF_CLIMB = False    # ...and climb for ones we can't shoot from here. Harness: climbing broke 1 of 12 targets, ~10 s/match spent
+FARM_SEEK = False          # sim: cubes 2.5 -> 1.6, died sooner (runs into house bots). Nothing known to farm: walk to the nearest unexplored patch of the safe zone (SEEK)
+FARM_SEEK_CELL_M = 50      # patch size
+FARM_SEEK_SEEN_M = 40      # a patch counts as explored once we pass this close to its center
+FARM_SEEK_ZONE_FRAC = 0.85 # patches must lie inside this fraction of the next circle
+FARM_SEEK_REPLAN_S = 15.0  # pick a new patch at least this often
+
+# Survival probe: never start fights. Fight back at anyone who hit us in the last FFA_GRUDGE_S or finish a weak lone
+# mech (ffa_target); break line of sight from everyone else (AVOID); keep farming when nobody is near. Practice
+# survivors at 8:00 are ranked by HP after the zone closes (~6:55), so surviving with more HP than the house bots
+# could place high without kills. A score near 0 means real hunters find and kill a passive bot.
+SURVIVE = True
 
 # Awareness (brain.py). The server keeps reporting a mech's real position for vision.memory_s (5 s) after it
 # leaves view; these cover what happens after that, plus where the torso looks.

@@ -88,6 +88,8 @@ class Brain:
         self.slice = None  # (computed at, target id, target pos, hidden?, spot) for SLICE
         self.ffa_on = config.MODE == "ffa"
         self.last_mech_hurt = -1e9  # last time a mech (not a drone or the zone) damaged us
+        self.explored = set()  # FARM_SEEK patches we've passed close to
+        self.seek = None  # (picked at, (x, y) goal, patch)
         self.last_hurt = -1e9  # last time anything (incl. the zone) damaged us
         self.healing = False   # HEAL_BETWEEN
         self.our_kills = set()  # mech ids we killed (AUTO_FFA)
@@ -366,12 +368,22 @@ class Brain:
                     c = d * cost["cube"]
                     if best is None or c < best[0]:
                         best = (c, "cube", p, None)
-            elif typ == "crate" and p[2] - self.world.ground(p[0], p[1]) <= 3:
+            elif typ == "crate":
                 d = hdist(p, pos)
-                if d <= config.FARM_CRATE_M and self.in_safe(obs, p, config.LOOT_ZONE_FRAC):
-                    c = d * cost["crate"]
-                    if best is None or c < best[0]:
-                        best = (c, "crate", p, loot.crate_target({"id": iid, "pos": p, "hp": hp}, self.crate_dims))
+                if d > config.FARM_CRATE_M or not self.in_safe(obs, p, config.LOOT_ZONE_FRAC):
+                    continue
+                c = d * cost["crate"]
+                roof = p[2] - self.world.ground(p[0], p[1]) > 3
+                if roof:
+                    if not config.FARM_ROOF_CRATES or (best is not None and c + config.ROOF_COST_M >= best[0]):
+                        continue
+                    seen = d < config.FARM_SHOOT_M and self.world.los(muzzle, (p[0], p[1], p[2] + 1.2))
+                    if not (seen or (config.FARM_ROOF_CLIMB
+                                     and (self.nav.on_roof_of(pos, p) or self.nav.roof_reachable(p)))):
+                        continue
+                    c += 0.0 if seen else config.ROOF_COST_M
+                if best is None or c < best[0]:
+                    best = (c, "crate", p, loot.crate_target({"id": iid, "pos": p, "hp": hp}, self.crate_dims))
         if me["hp"] >= me["max_hp"] * config.FARM_MIN_HP:
             for npc in self.track.targets_sorted("npc", max_age=0.3):  # listed now: a dead drone drops out
                 d = hdist(npc.pos, pos)
@@ -383,11 +395,46 @@ class Brain:
             return None
         _, kind, p, tgt = best
         if kind == "cube":
-            return (p[0], p[1]), None
+            return (p[0], p[1]), None, None
         aim_at = (p[0], p[1], p[2] + tgt.height / 2)
         if hdist(p, pos) < config.FARM_SHOOT_M and self.world.los(muzzle, aim_at):
-            return (pos[0], pos[1]), tgt
-        return (p[0], p[1]), None
+            return (pos[0], pos[1]), tgt, None
+        roof = kind == "crate" and p[2] - self.world.ground(p[0], p[1]) > 3
+        return (p[0], p[1]), None, (tuple(p) if roof else None)
+
+    def seek_goal(self, obs, t):
+        """FARM_SEEK: a walkable point in the nearest unexplored patch inside the next circle, or None."""
+        me = obs["self"]
+        x, y = me["pos"][0], me["pos"][1]
+        cell = config.FARM_SEEK_CELL_M
+        w = self.world
+        for ci in range(int((x - config.FARM_SEEK_SEEN_M - w.min_x) // cell), int((x + config.FARM_SEEK_SEEN_M - w.min_x) // cell) + 1):
+            for cj in range(int((y - config.FARM_SEEK_SEEN_M - w.min_y) // cell), int((y + config.FARM_SEEK_SEEN_M - w.min_y) // cell) + 1):
+                cx, cy = w.min_x + (ci + 0.5) * cell, w.min_y + (cj + 0.5) * cell
+                if math.hypot(cx - x, cy - y) <= config.FARM_SEEK_SEEN_M:
+                    self.explored.add((ci, cj))
+        s = self.seek
+        if s is not None and t - s[0] < config.FARM_SEEK_REPLAN_S and s[2] not in self.explored:
+            return s[1]
+        z = obs["zone"]
+        zx, zy, zr = z["next_center"][0], z["next_center"][1], z["next_radius"] * config.FARM_SEEK_ZONE_FRAC
+        cands = []
+        for ci in range(int((zx - zr - w.min_x) // cell), int((zx + zr - w.min_x) // cell) + 1):
+            for cj in range(int((zy - zr - w.min_y) // cell), int((zy + zr - w.min_y) // cell) + 1):
+                if (ci, cj) in self.explored:
+                    continue
+                cx, cy = w.min_x + (ci + 0.5) * cell, w.min_y + (cj + 0.5) * cell
+                if math.hypot(cx - zx, cy - zy) <= zr and w.in_bounds(cx, cy):
+                    cands.append((math.hypot(cx - x, cy - y), (ci, cj), cx, cy))
+        cands.sort()
+        for _, patch, cx, cy in cands[:6]:
+            p = self.nav.nearest_walkable(cx, cy)
+            if p is not None and self.nav.walkable_xy(*p) and math.hypot(p[0] - zx, p[1] - zy) <= zr:
+                self.seek = (t, p, patch)
+                return p
+            self.explored.add(patch)  # nothing walkable there: skip it from now on
+        self.seek = None
+        return None
 
     def crate_goal(self, obs):
         """(goal_xy, crate target to shoot or None) for the nearest remembered ground crate, or None."""
@@ -650,7 +697,8 @@ class Brain:
         zgoal, hurry = self.zone_goal(obs)
         mech = self.pick_mech()
         ffa = self.ffa_on
-        target = self.ffa_target(t) if ffa else mech
+        passive = ffa or config.SURVIVE  # pick fights the FFA way: attackers and weak lone mechs only
+        target = self.ffa_target(t) if passive else mech
         if mech is not None:
             self.threat = target if target is not None else mech
         threat = self.threat if self.threat and t - self.threat.last_seen < 6.0 else None
@@ -684,6 +732,11 @@ class Brain:
                 and me["cubes"] < config.FARM_CUBES and t - self.last_mech_hurt >= config.FARM_CALM_S
                 and not (visible_mech and hdist(mech.pos, (x, y)) < config.FARM_FIGHT_M)):
             fgoal = self.farm_goal(obs)
+            if (fgoal is None and config.FARM_SEEK and target is None
+                    and not (config.THREAT_MEMORY and self.lost_threat(me) is not None)):
+                sp = self.seek_goal(obs, t)
+                if sp is not None:
+                    fgoal = (sp, "seek", None)
         cgoal = None if hurry else self.cube_goal(obs, hdist(target.pos, (x, y)) if target is not None else None)
         roof_goal = None
         goal = zgoal
@@ -724,8 +777,10 @@ class Brain:
                 act["take"] = wgoal[0]
                 if wgoal[2] is not None:
                     act["drop"] = wgoal[2]
+        elif fgoal is not None and fgoal[1] == "seek":
+            mode, goal = "SEEK", fgoal[0]
         elif fgoal is not None:
-            mode, (goal, shoot) = "FARM", fgoal
+            mode, (goal, shoot, roof_goal) = "FARM", fgoal
             target = shoot
             stand = shoot is not None
         elif crgoal is not None:
@@ -835,7 +890,7 @@ class Brain:
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
-        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE", "FARM") or (mode != "ZONE" and (ffa or late)):
+        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE", "FARM", "SEEK") or (mode != "ZONE" and (passive or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge
@@ -865,7 +920,7 @@ class Brain:
             phase = int(t / config.EVADE_SCAN_PERIOD_S) % 2
             act["aim"] = [math.atan2(my, mx) + math.radians(config.EVADE_SCAN_ANGLE_DEG) * (1 - 2 * phase), 0.0]
         fight = self.weapons.decide(me, target, self.world)
-        if hide or (ffa and target is None):
+        if hide or (passive and target is None):
             fight["fire"] = [False, False]
             gun = next((w for w in me["weapons"] if w and w["kind"] == "gun"), None)
             if gun and gun["reload"] <= 0 and gun["ammo"] < gun["stats"]["mag"]:
