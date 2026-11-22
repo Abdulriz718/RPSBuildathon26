@@ -261,36 +261,8 @@ Evasion gained five duel wins on each split and raised jet energy use. Its arena
 placement changed by -0.25 on training and +0.25 on holdout. The default passed
 the selection gate because the evasion candidate failed to improve both splits.
 These are simulated placements with a small number of distinct arena seeds.
-Team follow-up: a later submission may have scored **3.08**. The result and
-submitted SHA are unconfirmed. The team reports **3.4** as the current score
-while a separate run is in progress. The offline tuning run did not submit an entry.
+The official record remains 3.4 followed by 3.17. No submission was made.
 
 Reproduce with `python tools/bench.py --tune-movement --seeds 1 5335629 --holdout-seeds 271828 7813031 --workers 4`.
 The replay benchmark measured 1.88 ms p99 with zero fallbacks. All 17 unit tests
 passed and the protocol checker received all 300 answers on time.
-
-## Single-factor zone-edge and pinch avoidance
-
-Hypothesis: redirecting exposed movement near the shrinking boundary will improve
-mean placement by preserving a route back inside. Official team reference 3.4,
-submitted SHA unknown. Local control was farm mode at `4c5fbbd`.
-
-`ZONE_EDGE_AVOIDANCE` in bot/config.py gates a final movement-heading adjustment
-in bot/brain.py. It projects the moving circle one second ahead, penalizes lost
-edge clearance and visible opponents in the inward lane, and checks alternative
-headings for terrain clearance. The original movement magnitude and action flags
-are preserved. The focused tools/test_phase3.py test exercises interior travel,
-outside recovery, and the same inward route with and without a blocking mech.
-
-Paired runs used `tools/bench.py --matches --modes farm --seeds 1 5335629 --random-seeds 0 --workers 2`
-with only `--set ZONE_EDGE_AVOIDANCE=False` or `True` changed. Across eight
-16-player expert simulations per arm the placement points matched exactly:
-3, 15, 8, 8, 5, 6, 7, 7 (mean 7.375, delta 0). Zone survival was 8/8 for each.
-Both won 16/32 expert duels with damage-free rate 0.9203265765765766.
-These independent opponents differ from the coordinated official practice squad.
-
-18 unit tests passed. Candidate-enabled fuzz and hardening passed (p99 5.9 ms
-in fuzz, 5.4 ms in the last minute of hardening). Default replay p99 was 2.51 ms
-over 900 ticks with zero fallbacks; the local checker received 300/300 on time.
-Decision: keep the experiment disabled. No measured placement gain and no
-official candidate submission or new official score.
