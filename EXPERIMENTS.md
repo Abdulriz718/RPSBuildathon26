@@ -342,4 +342,14 @@ Not testable in the sims (no crates). Checked on the recorded stream plus a synt
 stands and fires on 29/30 ticks at 30 m, forgets it once gone. `HEAL_BETWEEN` is off in this build so crates are
 measured alone against 3.40.
 
-| 12 | | | 3.40 behaviour + CRATE_HUNT (HEAL off) | | |
+| 12 | | | 3.40 behaviour + CRATE_HUNT (HEAL off) | 3.15 | inconclusive, below 3.40; off |
+
+## The 3.40 behaviour was not the default after all
+
+Identity check in the practice sim (same 24 seeds, exported `4af2045` vs current code): only **5/24** matches came
+out identical. Three changes made after 3.40 were on by default, so #9-#12 were not "3.40 + one change":
+`COMBINED_FIRE=True`, `CUBE_COLLECT=True`, and the torso weapon sweep continuing until a laser (3.40 stopped at any
+2nd weapon). With those off (`COMBINED_FIRE=False`, `CUBE_COLLECT=False`, new `SWEEP_UNTIL_LASER=False`): **24/24**
+identical, with `AUTO_FFA` on or off. Those are now the defaults.
+
+| 13 | | | exact 3.40 behaviour (24/24 identical in sim) + AUTO_FFA on (FFA detector for the final) | | |
