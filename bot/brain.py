@@ -89,6 +89,8 @@ class Brain:
         self.ffa_on = config.MODE == "ffa"
         self.last_mech_hurt = -1e9  # last time a mech (not a drone or the zone) damaged us
         self.last_kill_t = -1e9  # KILL_CUBES
+        self.ignoring = None  # POWER_CURVE: id of a mech we chose not to fight
+        self.stalking = None  # STALK: the unaware mech we're going after
         self.explored = set()  # FARM_SEEK patches we've passed close to
         self.seek = None  # (picked at, (x, y) goal, patch)
         self.last_hurt = -1e9  # last time anything (incl. the zone) damaged us
@@ -674,6 +676,64 @@ class Brain:
                 best = (e.age, p)
         return None if best is None else best[1]
 
+    def ignore_mech(self, me, mech, t):
+        """POWER_CURVE: a far mech that isn't on us, or one with clearly more cubes that hasn't engaged us."""
+        if t - self.hurt_by.get(mech.id, -1e9) < config.POWER_HURT_S:
+            return False
+        dx, dy = me["pos"][0] - mech.pos[0], me["pos"][1] - mech.pos[1]
+        d = math.hypot(dx, dy) or 1.0
+        if d <= config.POWER_IGNORE_M:
+            return False
+        if mech.aim is not None:  # its torso points at us: it's fighting us
+            bearing_to_us = math.atan2(dy, dx)
+            if abs(math.remainder(mech.aim[0] - bearing_to_us, math.tau)) < config.POWER_AIM_RAD:
+                return False
+        closing = (mech.vel[0] * dx + mech.vel[1] * dy) / d  # m/s toward us
+        stronger = mech.cubes >= me["cubes"] + config.POWER_MARGIN
+        return closing < config.POWER_CLOSING or stronger
+
+    def unaware(self, me, mech, t):
+        """STALK: mech isn't fighting us (no recent hit, not aiming at us, not closing in) and is alone."""
+        if t - self.hurt_by.get(mech.id, -1e9) < config.STALK_HURT_S:
+            return False
+        dx, dy = me["pos"][0] - mech.pos[0], me["pos"][1] - mech.pos[1]
+        d = math.hypot(dx, dy) or 1.0
+        if mech.aim is not None and abs(math.remainder(mech.aim[0] - math.atan2(dy, dx), math.tau)) < config.STALK_AIM_RAD:
+            return False
+        if (mech.vel[0] * dx + mech.vel[1] * dy) / d > config.STALK_CLOSING:
+            return False
+        return not any(o.id != mech.id and hdist(o.pos, mech.pos) < config.STALK_LONE_M
+                       for o in self.track.targets_sorted("mech", max_age=2.0))
+
+    @staticmethod
+    def behind_of(me, mech):
+        """True if we're outside mech's front arc (its torso faces away from us)."""
+        if mech.aim is None:
+            return False
+        to_us = math.atan2(me["pos"][1] - mech.pos[1], me["pos"][0] - mech.pos[0])
+        return abs(math.remainder(mech.aim[0] - to_us, math.tau)) > math.pi / 2
+
+    def stalk_spot(self, obs, me, mech):
+        """Where to go for mech: straight at it if we're already behind it, else a point STALK_BEHIND_M behind it."""
+        if self.behind_of(me, mech) or mech.aim is None:
+            return (mech.pos[0], mech.pos[1])
+        back = mech.aim[0] + math.pi
+        px = mech.pos[0] + config.STALK_BEHIND_M * math.cos(back)
+        py = mech.pos[1] + config.STALK_BEHIND_M * math.sin(back)
+        if not loot.in_next_zone(obs["zone"], (px, py)):
+            return (mech.pos[0], mech.pos[1])
+        spot = self.nav.nearest_walkable(px, py)
+        return spot if spot is not None else (mech.pos[0], mech.pos[1])
+
+    def stalk_target(self, obs, me, t):
+        """STALK_SEEK: nearest unaware lone mech within STALK_MAX_M (server-tracked positions), or None."""
+        for m in self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S + 4.0):
+            if hdist(m.pos, me["pos"]) > config.STALK_MAX_M:
+                break
+            if loot.in_next_zone(obs["zone"], m.pos[:2]) and self.unaware(me, m, t):
+                return m
+        return None
+
     def hidden_from(self, me, threat):
         p = me["pos"]
         eye = (threat.pos[0], threat.pos[1], threat.pos[2] + 8.0)
@@ -736,6 +796,16 @@ class Brain:
         if mech is not None:
             self.threat = target if target is not None else mech
         threat = self.threat if self.threat and t - self.threat.last_seen < 6.0 else None
+        self.ignoring = None
+        if config.POWER_CURVE and not passive and mech is not None and target is mech and self.ignore_mech(me, mech, t):
+            self.ignoring = mech.id  # far, not on us: don't chase or shoot it; keep farming / drops
+            mech = target = None
+        self.stalking = None
+        if (config.STALK_FLANK and not passive and mech is not None and target is mech and mech.age == 0
+                and hdist(mech.pos, (x, y)) > config.STALK_OPEN_M and not self.behind_of(me, mech)
+                and self.unaware(me, mech, t)):
+            self.stalking = mech  # unaware and facing our way: get behind it before opening fire
+            mech = target = None
         visible_mech = mech is not None and mech.age == 0
         # HEAL starts only between fights (nobody in sight, no hits either way for a while); being hit ends it
         if not config.HEAL_BETWEEN or t - self.last_hurt < 0.5 or hp_frac >= config.HEAL_DONE:
@@ -894,6 +964,10 @@ class Brain:
         else:
             mode = "HOLD"
             goal = self.away_from_danger(obs, goal)
+            if self.stalking is None and config.STALK_SEEK and hp_frac >= config.STALK_MIN_HP and not late:
+                self.stalking = self.stalk_target(obs, me, t)
+            if self.stalking is not None:
+                mode, goal = "STALK", self.stalk_spot(obs, me, self.stalking)
             if config.STYLE == "roof" and self.on_any_roof(me) and not config.ROOF_ONLY_FIGHTING:
                 goal, stand = (x, y), True
             if (config.STYLE == "assassin" and me["hp"] >= config.ASSASSIN_HP * me["max_hp"]
@@ -902,7 +976,9 @@ class Brain:
             if config.LASER_ROAM and not self.has_laser(me) and not self.danger and t < config.LASER_ROAM_UNTIL_S:
                 mode, goal = "SEARCH", self.roam_point(obs, t)
             lost = self.lost_threat(me) if config.THREAT_MEMORY else None
-            if lost is not None:
+            if mode == "STALK":
+                pass  # stalking beats watching / looting
+            elif lost is not None:
                 mode = "WATCH"  # an enemy just went out of view: keep the zone spot, face it, no drones or loot
             elif (t < config.LOOT_UNTIL_S and not late and not self.recovering
                     and t - self.last_exchange > 3.0):
@@ -945,7 +1021,7 @@ class Brain:
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
-        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE", "FARM", "SEEK", "CAMP") or (mode != "ZONE" and (passive or late)):
+        elif mode in ("FIGHT", "DROP", "HOLD", "WATCH", "LOOT", "CUBES", "CRATE", "FARM", "SEEK", "CAMP", "STALK") or (mode != "ZONE" and (passive or late)):
             dodge = self.weapons.dodge(obs, target, self.world)
             if dodge is not None:
                 dx, dy, urgent = dodge
@@ -965,7 +1041,10 @@ class Brain:
         sweep = config.SWEEP_FOR_WEAPONS and (not self.has_laser(me) if config.SWEEP_UNTIL_LASER
                                               else me["weapons"][1] is None)
         act["aim"] = [self.idle_yaw(mx, my, me, sweep=sweep or (config.SCAN_ALWAYS and target is None)), 0.0]
-        lost = self.lost_threat(me) if config.THREAT_MEMORY and target is None else None
+        if mode == "STALK" and self.stalking is not None:  # keep it in view so its position stays real
+            sp = self.stalking.predict(0)
+            act["aim"] = [math.atan2(sp[1] - y, sp[0] - x), 0.0]
+        lost = (self.lost_threat(me) if config.THREAT_MEMORY and target is None and mode != "STALK" else None)
         if lost is not None and self.track.threat_bearing() is None:
             act["aim"] = [math.atan2(lost[1] - y, lost[0] - x), 0.0]
         if target is None and threat is not None and mode in ("RECOVER", "AVOID", "HEAL"):

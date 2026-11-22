@@ -568,4 +568,29 @@ Passive-house-bot harness, 12 matches of 300 s: drops captured 1.25 -> 1.50 of 3
 time. Captures finish ~13 s after landing (fights with nearby house bots delay it). Expected real effect +0.05-0.1,
 below what one builders-4 run can show (~+0.7). Kept on by mechanism, judged only against a large drop.
 
-| 26 | | | #25 + DROP_CAMP | | builders-4 |
+| 26 | | | #25 + DROP_CAMP | 4.35 (builders-4) | no clear change vs 4.40 (builders-3, different seeds); kept |
+
+## Power curve (`POWER_CURVE`, off, not submitted)
+
+Ignore (don't chase or shoot) a visible mech more than 55 m away that hasn't hit us recently and isn't approaching,
+or that has 2+ more cubes than us; keep farming / drops instead. Drone HP threshold 35% -> 25% with it.
+Tracker now stores each mech's cubes (`Target.cubes`).
+
+Practice sim, 96 paired: -0.43 +-0.14 (3 s hurt memory; hunters strafing at 45-65 m slipped through and we stopped
+shooting back), then -0.33 +-0.12 with 10 s hurt memory + "its torso aims at us" -> fight. Still ignoring a mech 20%
+of ticks, mostly far non-hunters, and kills fell 2.1 -> 1.8: shooting far house bots is where some kills come from.
+Off. FARM_MIN_HP back to 0.35 with it.
+
+## STALK: hunt unaware house bots from behind (`STALK_SEEK`, `STALK_FLANK`)
+
+Where kills come from (practice sim, 40 matches): hunters 45 kills at median 51 m, none from behind; house bots that
+weren't hunting us 35 kills at median 88 m, 22 of them finished from behind (rear hits x1.5).
+STALK_SEEK: with nothing to farm or fight, go after the nearest unaware lone house bot within 220 m (not aiming at
+us, not closing in, no hit on us in 10 s, no other mech within 60 m of it). STALK_FLANK: such a bot farther than
+70 m and facing us: circle to 60 m behind it before opening fire.
+
+Practice sim, 96 paired: seek -0.09 +-0.09, flank -0.07 +-0.10, both -0.11 +-0.10. STALK runs only 2% of the time
+in the sim (its bot dies ~50 s and is always fighting or farming), and non-hunter kills fell 35 -> 31 with both on.
+The real bot lives far longer, so it has more idle time; only the server can tell.
+
+| 27 | | | #26 + STALK_SEEK + STALK_FLANK | | builders-4 |

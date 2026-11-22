@@ -204,7 +204,25 @@ FARM_UNTIL_S = 360         # farm before this match time... (#16: 180 scored 4.1
 FARM_CUBES = 21            # ...while we hold fewer cubes than this (stats cap at 10, upgrades go on at 15, 21; #16 had 10)
 FARM_FIGHT_M = 90          # a visible mech closer than this takes priority
 FARM_CALM_S = 2.0          # ...as does a mech that hit us this recently
-FARM_MIN_HP = 0.35         # don't start on drones below this HP fraction
+# STALK (#27): house bots that aren't hunting us are ~44% of our kills in the sim, 63% of those finished from behind
+# (rear hits x1.5). Seek them out when idle, and flank to their back before opening fire on an unaware one.
+STALK_SEEK = True          # nothing to farm / fight: go after the nearest unaware lone house bot
+STALK_FLANK = True         # an unaware one farther than STALK_OPEN_M and facing us: circle behind it first
+STALK_MAX_M = 220          # seek mechs up to this far (tracked positions are real for 5 s after sight)
+STALK_OPEN_M = 70          # open fire anyway once this close
+STALK_BEHIND_M = 60        # flank point: this far behind its torso facing
+STALK_MIN_HP = 0.6         # only go looking with at least this HP fraction
+STALK_HURT_S = 10.0        # "unaware" = hasn't hit us this recently...
+STALK_AIM_RAD = 0.5        # ...isn't aiming within this of us...
+STALK_CLOSING = 2.0        # ...isn't approaching faster than this (m/s)...
+STALK_LONE_M = 60          # ...and has no other tracked mech this close to it
+POWER_CURVE = False        # sim -0.43 / -0.33 (96 paired): far house bots are kills too; not submitted
+POWER_IGNORE_M = 55        # mechs closer than this are always fought
+POWER_HURT_S = 10.0        # ...as is any mech that hit us this recently (3 s: hunters at range slipped through)
+POWER_AIM_RAD = 0.3        # ...or whose torso aims within this of us
+POWER_CLOSING = 2.0        # a far mech approaching faster than this (m/s) is fought, unless it's stronger:
+POWER_MARGIN = 2           # ...stronger = at least this many more cubes than us
+FARM_MIN_HP = 0.25 if POWER_CURVE else 0.35  # don't start on drones below this HP fraction
 FARM_CUBE_M = 90           # walk this far for a cube (150 tried: no gain in sim)
 FARM_NPC_M = 150           # ...for a drone (2 cubes) (250 tried: no gain in sim)
 FARM_CRATE_M = 120         # ...for a crate (1 cube) (200 tried: no gain in sim)
