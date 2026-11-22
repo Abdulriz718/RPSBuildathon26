@@ -544,4 +544,28 @@ unless another mech is within 15 m.
 Sim, 24 matches (kill cubes picked up by anyone / dropped): off 40/123 (33%), 40 m & safe 40 m 47/117 (40%),
 60 m & safe 15 m 52/109 (48%). Practice sim 96 paired: -0.02 / -0.04 +-0.10 (flat; sim house bots carry few cubes).
 
-| 25 | | | #24 + KILL_CUBES (60 m, unless a mech within 15 m) | | |
+| 25 | | | #24 + KILL_CUBES (60 m, unless a mech within 15 m) | 4.40 | NEW BEST (+0.14 over 4.26), builders-3 (48 fixed seeds) |
+
+## Scorer change: builders-4 (96 fresh random seeds)
+
+From Sun 1:00 AM every practice run plays 96 fresh private random seeds (was 48 fixed seeds), and identical code
+keeps its first builders-4 score. Consequences:
+- Our "+-0.05 noise" was an artifact of fixed seeds: same seeds, near-identical results. Comparisons #13-#25 were
+  paired on those 48 seeds, so they were valid but only for those 48 maps/spawns; small gains may not generalize.
+- With fresh seeds each run is unpaired. Per-match spread in the practice sim is 1.9 points (sd over 96 matches; real is likely
+  2-3), so one 96-seed score is about +-0.25-0.3, and the difference of two runs about +-0.35-0.4. A change needs
+  roughly +0.7 to be clearly real from a single submission each.
+- Big wins so far (farm +0.68) should hold; the small ones (drops +0.16, kill cubes +0.14) may shrink.
+
+## Drop camping (`DROP_CAMP`, CAMP mode)
+
+Builders-4 rescore: top team 6.28 (was 6.58).
+Once a drop is called and we can reach it before it lands (at boost speed, 3 s spare), and nobody is within 70 m or
+just hit us: boost to a spot 20 m short of the landing point, hold there scanning, step in as it lands (DROP rush
+takes over ~6 s before landing).
+
+Passive-house-bot harness, 12 matches of 300 s: drops captured 1.25 -> 1.50 of 3 per match; CAMP takes 5% of the
+time. Captures finish ~13 s after landing (fights with nearby house bots delay it). Expected real effect +0.05-0.1,
+below what one builders-4 run can show (~+0.7). Kept on by mechanism, judged only against a large drop.
+
+| 26 | | | #25 + DROP_CAMP | | builders-4 |
