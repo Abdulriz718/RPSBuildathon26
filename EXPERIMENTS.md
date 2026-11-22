@@ -130,3 +130,21 @@ Sim fixes this round (earlier numbers were wrong): (1) worker processes kept one
 next variant, so everything after `MODE='ffa'` in a comparison silently ran in ffa mode; now each job reloads
 `bot/config.py`. (2) A*, cover search and the tick guard ran on wall-clock budgets, so results depended on CPU load;
 the sim now gives them room, and a repeated seed reproduces exactly.
+
+| 9 | | | Abdul's 3 requests: zig-zag+hop under fire, AVOID_PEOPLE+MULTI_DISENGAGE+AVOID_FIGHT_SOUNDS, laser-only + laser roam | 2.75 | NO: practice sim predicted the drop (0.92 vs ~2.2 on 12 matches). Best is still 3.40 |
+| 10 | | | 3.40 behaviour + STYLE='kite' (hold 120-170 m, boost away when closer) | | |
+
+## Practice sim (`tools/practice.py`): calibrated on 8 scored versions, correlation 0.94 with real scores
+
+Sim scores run ~1.3 below real. Model: 15 house bots as one squad (no friendly fire), 1 hunter at start, +1 per kill,
+all hunt after 300 s; cubes, upgrades, 12 NPC drones, zone, 40 floor weapons.
+
+What-if (144 paired): start with laser +1.10, 10 cubes +0.50, laser+10 cubes +1.68, lightning -0.48, mortar -0.24.
+Config/feature tries, no gain (vs base): ffa mode -0.94, retreat at 30% -0.35, zone centre -0.19, zone edge +0.05,
+disengage -0.05, avoid sounds +0.01, aim 2.0 +0.10, cube collection 0, drone farming -0.08, laser-only +0.03..+0.12,
+combined gun+laser fire -0.01.
+
+Play styles, 48-match screen (vs default): kite 120-170 m +0.44, kite 170-220 +0.35, kite 90-140 +0.27,
+assassin -0.15, rush -0.23, zigzag under fire -0.50, roof camping -1.17, kite without boost -0.12.
+Confirmed (144): kite 120-170 +0.33 +-0.12, with boost at 20+ energy +0.35 +-0.13 -> new default.
+Caveat: the sim has no trees; real sight lines are shorter, so the real gain may be smaller.

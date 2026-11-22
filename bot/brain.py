@@ -77,6 +77,8 @@ class Brain:
         self.zig_sign, self.zig_t = 1, -1e9  # zig-zag under fire
         self.next_hop, self.hop_until = -1e9, -1e9  # little jump-and-jet hops under fire
         self.roam = None  # (until, (x, y)) waypoint while searching for a laser
+        self.style_boost = False
+        self.roof_spot = None  # (computed at, (x, y, z)) for STYLE "roof"
         self.anchor = None  # (circle, refresh time, position)
         # The map and nav grids are big and live all match: move them out of the GC's scans
         # so a collection can't stall a tick.
@@ -486,6 +488,12 @@ class Brain:
             mode = "AVOID"
             goal = self.retreat_goal(obs, threat, t)
             stand = all(self.hidden_from(me, enemy) for enemy in close_enemies)
+        elif (config.STYLE == "roof" and t < config.ROOF_STYLE_UNTIL_S and not self.on_any_roof(me)
+              and (target is None or hdist(target.pos, (x, y)) > config.ROOF_STYLE_FIGHT_M)
+              and self.style_roof_spot(obs, t) is not None):
+            mode = "ROOFUP"
+            spot = self.style_roof_spot(obs, t)
+            goal, roof_goal = (spot[0], spot[1]), spot
         elif cgoal is not None and (target is None or hdist(cgoal, (x, y)) <= config.CUBE_FIGHT_M):
             mode, goal = "CUBES", cgoal
         elif wgoal is not None:
@@ -510,10 +518,13 @@ class Brain:
             target = None  # don't provoke it
         elif target is not None:
             mode = "FIGHT"
-            pair = self.fight_spot(obs, target, t)
+            style_move = self.style_fight(me, target, t)
+            pair = None if style_move is not None else self.fight_spot(obs, target, t)
             reloading = any(w and w["kind"] == "gun" and (w["reload"] > 0 or w["ammo"] == 0)
                             for w in me["weapons"])
-            if pair is not None:
+            if style_move is not None:
+                move = style_move
+            elif pair is not None:
                 goal, precise = (pair[0] if reloading else pair[1]), True
                 hide = reloading
             else:
@@ -526,6 +537,11 @@ class Brain:
         else:
             mode = "HOLD"
             goal = self.away_from_danger(obs, goal)
+            if config.STYLE == "roof" and self.on_any_roof(me):
+                goal, stand = (x, y), True
+            if (config.STYLE == "assassin" and me["hp"] >= config.ASSASSIN_HP * me["max_hp"]
+                    and t < config.ASSASSIN_UNTIL_S):
+                mode, goal = "HUNT", self.hunt_point(obs, t)
             if config.LASER_ROAM and not self.has_laser(me) and not self.danger and t < config.LASER_ROAM_UNTIL_S:
                 mode, goal = "SEARCH", self.roam_point(obs, t)
             if (t < config.LOOT_UNTIL_S and not late and not self.recovering
@@ -546,7 +562,7 @@ class Brain:
         if roof_goal is not None:
             roof = self.nav.roof_step(me["pos"], roof_goal, t, me["energy"], me["grounded"])
         if move is not None:
-            mx, my, jump, boost = move[0], move[1], False, False
+            mx, my, jump, boost = move[0], move[1], False, self.style_boost
         elif roof is not None:
             mx, my, jump, boost = roof
         else:
@@ -640,6 +656,87 @@ class Brain:
         mf.draw.label(f"{mode} {tgt} | {me['hp']:.0f}/{me['max_hp']:.0f} c{me['cubes']}")
         mf.draw.text(" ".join(weapons) + f" | fire {'G' if fire[0] else '-'}{'2' if len(fire) > 1 and fire[1] else '-'}"
                      + (" HIDE" if hide else "") + (" REC" if self.recovering else ""))
+
+    # ---- play styles (config.STYLE) ---------------------------------------------------------------------------
+    def style_fight(self, me, target, t):
+        """Unit move while fighting for STYLE kite/rush/roof, or None for the default (cover peek / strafe)."""
+        self.style_boost = False
+        style = config.STYLE
+        if style not in ("kite", "rush", "roof"):
+            return None
+        x, y = me["pos"][0], me["pos"][1]
+        dx, dy = target.pos[0] - x, target.pos[1] - y
+        d = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / d, dy / d
+        sx, sy = self.strafe(me, target, t)
+        if style == "roof" and self.on_any_roof(me):
+            return 0.0, 0.0  # hold the high ground; the torso keeps shooting
+        if style == "roof":
+            return None
+        if style == "kite":
+            if d < config.KITE_MIN_M:
+                mx, my = -ux + sx * 0.4, -uy + sy * 0.4
+                self.style_boost = me["energy"] > config.KITE_BOOST_ENERGY
+            elif d > config.KITE_MAX_M:
+                mx, my = ux + sx * 0.5, uy + sy * 0.5
+            else:
+                return sx, sy
+        else:  # rush
+            if d > config.RUSH_RANGE_M:
+                mx, my = ux + sx * 0.5, uy + sy * 0.5
+                self.style_boost = me["energy"] > config.RUSH_BOOST_ENERGY
+            else:
+                return sx, sy
+        if not self.nav.walkable_xy(x + mx * config.STRAFE_PROBE_M, y + my * config.STRAFE_PROBE_M):
+            return sx, sy
+        n = math.hypot(mx, my) or 1.0
+        return mx / n, my / n
+
+    def on_any_roof(self, me):
+        return me["pos"][2] - self.world.ground(me["pos"][0], me["pos"][1]) > 3
+
+    def style_roof_spot(self, obs, t):
+        """Nearest climbable roof at least ROOF_STYLE_MIN_H tall, inside the next circle. Cached ROOF_STYLE_CACHE_S."""
+        if self.roof_spot is not None and t - self.roof_spot[0] < config.ROOF_STYLE_CACHE_S:
+            return self.roof_spot[1]
+        me = obs["self"]
+        x, y = me["pos"][0], me["pos"][1]
+        z = obs["zone"]
+        nav, w = self.nav, self.world
+        best = None
+        r = int(config.ROOF_STYLE_SEARCH_M / config.NAV_CELL)
+        ci, cj = nav.to_cell(x, y)
+        for j in range(max(0, cj - r), min(nav.cny, cj + r + 1), 2):
+            for i in range(max(0, ci - r), min(nav.cnx, ci + r + 1), 2):
+                c = j * nav.cnx + i
+                if not nav.roof[c] or nav.Bl[c]:
+                    continue
+                px, py = nav.to_xy(i, j)
+                if math.hypot(px - z["next_center"][0], py - z["next_center"][1]) > z["next_radius"] * 0.85:
+                    continue
+                h = nav.Hl[c] - w.ground(px, py)
+                if h < config.ROOF_STYLE_MIN_H or h > config.ROOF_MAX_CLIMB_M:
+                    continue
+                d = math.hypot(px - x, py - y)
+                if best is None or d < best[0]:
+                    if nav.roof_reachable((px, py)):
+                        best = (d, (px, py, nav.Hl[c]))
+        self.roof_spot = (t, None if best is None else best[1])
+        return self.roof_spot[1]
+
+    def hunt_point(self, obs, t):
+        """STYLE assassin: head for the latest fight or gunshot we heard; else roam the safe circle."""
+        x, y = obs["self"]["pos"][0], obs["self"]["pos"][1]
+        shot = self.track.recent_shot_bearing(config.ASSASSIN_SOUND_S)
+        if shot is None:
+            for snd in obs["sounds"]:
+                if snd["kind"] in config.DANGER_SOUNDS:
+                    shot = snd["bearing"]
+                    break
+        if shot is not None:
+            px, py = x + 60 * math.cos(shot), y + 60 * math.sin(shot)
+            return self.nav.nearest_walkable(px, py)
+        return self.roam_point(obs, t)
 
     def zigzag(self, obs, target, t, mx, my, jump, boost):
         """Being shot at (hit recently, or a shot about to land): weave side to side across the attacker's line,

@@ -134,22 +134,22 @@ FFA_FINISH_M = 90         # ...within this range
 
 # Early weapon grab (brain.py WEAPON mode). Sim: a laser turns 34% into 100% vs expert hunters.
 WEAPON_GRAB = True
-WEAPON_RANK = {"laser": 3}  # laser only: sim says holding lightning/mortar is worse than the gun alone
+WEAPON_RANK = {"mortar": 1, "lightning": 2, "laser": 3}   # swap up only to a higher rank
 WEAPON_BONUS = {"laser": 70, "lightning": 30, "mortar": 0}  # metres of detour each kind is worth
-WEAPON_MAX_M = 250         # fetch a laser up to this far
+WEAPON_MAX_M = 150         # fetch a first weapon up to this far
 WEAPON_SWAP_M = 45         # swap to a better weapon only this close
 WEAPON_FIGHT_M = 80        # with a visible mech closer than this...
 WEAPON_GRAB_IN_FIGHT_M = 20  # ...only fetch weapons within this
 SWEEP_FOR_WEAPONS = True   # turn the torso while walking until we hold a 2nd weapon
 
 # Survival gameplans (brain.py). Off until they win in tools/ffa.py and tools/duel.py.
-AVOID_FIGHT_SOUNDS = True   # hold away from fights we hear/see that aren't aimed at us
+AVOID_FIGHT_SOUNDS = False  # hold away from fights we hear/see that aren't aimed at us
 DANGER_SOUNDS = frozenset({"gun", "mortar", "explosion", "laser", "laser_charge", "lightning"})
 DANGER_SOUND_DISTS = ("near", "mid")   # "near" < 60 m, "mid" < 160 m
 DANGER_MEMORY_S = 6.0
 DANGER_STEP_M = 40         # hold this far from where we are, away from the fights
 DANGER_ZONE_FRAC = 0.85    # ...but inside this fraction of the next circle
-MULTI_DISENGAGE = True     # back off to cover when 2+ attackers are on us
+MULTI_DISENGAGE = False    # back off to cover when 2+ attackers are on us
 MULTI_FINISH_HP = 400      # ...unless our target is this close to dead
 
 # Roof climbing (nav.py roof_step): reach weapons on roofs (a quarter of floor loot).
@@ -172,7 +172,7 @@ COMBINED_FIRE = True
 
 # Abdul's requests (not sim-tested by request):
 # 1. under fire: zig-zag across the attacker's line and hop with short jet bursts
-ZIGZAG_UNDER_FIRE = True
+ZIGZAG_UNDER_FIRE = False  # scored 2.75 on the server together with AVOID_PEOPLE/MULTI_DISENGAGE/laser-only
 ZIGZAG_HURT_S = 1.5        # "under fire" = hit within this long, or a shot about to land
 ZIGZAG_S = 0.45            # flip direction this often
 ZIGZAG_KEEP = 0.5          # how much of the mode's own movement to keep while weaving
@@ -180,12 +180,28 @@ ZIGZAG_HOP_EVERY_S = 1.2   # jump this often while under fire...
 ZIGZAG_HOP_ENERGY = 35     # ...if energy is at least this
 ZIGZAG_JET_S = 0.35        # jet this long after each jump
 # 2. stay away from people: hold away from mechs seen recently; don't start fights with far mechs
-AVOID_PEOPLE = True
+AVOID_PEOPLE = False
 AVOID_PEOPLE_M = 200       # mechs within this count as people to keep away from
 AVOID_ENGAGE_M = 90        # don't start a fight with a mech farther than this...
 AVOID_PROVOKED_S = 4.0     # ...unless it hit us this recently
 # 3. laser search: while we have no laser, roam the safe circle scanning for one
-LASER_ROAM = True
+LASER_ROAM = False
 LASER_ROAM_UNTIL_S = 240
 LASER_ROAM_S = 12          # pick a new waypoint this often
 LASER_ROAM_STEP_M = 70     # waypoint distance
+
+# Play styles (brain.py style_fight / HOLD). "default" = cover peek and strafe at whatever range.
+STYLE = "kite"             # "default", "kite", "rush", "roof", "assassin". kite: practice sim +0.35 +-0.13
+KITE_MIN_M = 120           # kite: back off (with boost) when a target is closer than this...
+KITE_MAX_M = 170           # ...and close in when farther than this
+KITE_BOOST_ENERGY = 20
+RUSH_RANGE_M = 25          # rush: close to this range
+RUSH_BOOST_ENERGY = 30
+ROOF_STYLE_UNTIL_S = 330   # roof: climb onto a roof and hold it until this match time
+ROOF_STYLE_MIN_H = 8       # roofs at least this tall
+ROOF_STYLE_SEARCH_M = 160
+ROOF_STYLE_FIGHT_M = 45    # stop climbing to fight anyone closer than this
+ROOF_STYLE_CACHE_S = 10
+ASSASSIN_HP = 0.8          # assassin: go looking for fights while HP is above this fraction
+ASSASSIN_UNTIL_S = 360
+ASSASSIN_SOUND_S = 4.0
