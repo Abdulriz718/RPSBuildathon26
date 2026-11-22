@@ -507,6 +507,9 @@ class Brain:
         bearing = None
         if config.DEFENSIVE_EVASION:
             bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)
+        duel_evasion = (config.DUEL_EVASION and mech is not None
+                        and mode in ("FIGHT", "RECOVER", "AVOID")
+                        and len(self.known_attackers(t, x, y)) == 1)
         if config.DEFENSIVE_EVASION and mode in ("RECOVER", "AVOID"):
             mx, my = defense.escape_move(
                 obs, (mx, my), boost, defensive_tracks, bearing, self.world, self.nav, self.cfg)
@@ -519,6 +522,9 @@ class Brain:
                     if step is not None:
                         s = 1.0 if urgent else config.STRAFE_SPEED_FRACTION
                         mx, my = step[0] * s, step[1] * s
+        if duel_evasion:
+            mx, my, jump, boost = defense.duel_move(
+                obs, (mx, my, jump, boost), self.world, self.cfg)
         act.update(move=[mx, my], boost=boost, jump=jump)
 
         # torso
