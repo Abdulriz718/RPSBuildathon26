@@ -533,4 +533,15 @@ before the first drop lands (95 s), so a passive-house-bot harness (12 matches, 
 old rules 0.50 of 3 drops per match, DROP_RUSH 1.92. The main blocker was "any mech in view" (FIGHT 60% of ticks
 while a drop was available). Normal practice sim: +0.04 +-0.04 (drops not reached), no harm.
 
-| 24 | | | #20 + DROP_RUSH | | |
+| 24 | | | #20 + DROP_RUSH | 4.26 | NEW BEST (+0.16 over 4.10): drops pay on the real server |
+
+## Kill-cube grab (`KILL_CUBES`)
+
+Every house bot we kill drops its cubes + 2 where it fell. FIGHT only grabbed cubes within 12 m; the rest waited for
+FARM, which rarely came before the next hunter. KILL_CUBES: for 15 s after our kill, walk over cubes within 60 m
+unless another mech is within 15 m.
+
+Sim, 24 matches (kill cubes picked up by anyone / dropped): off 40/123 (33%), 40 m & safe 40 m 47/117 (40%),
+60 m & safe 15 m 52/109 (48%). Practice sim 96 paired: -0.02 / -0.04 +-0.10 (flat; sim house bots carry few cubes).
+
+| 25 | | | #24 + KILL_CUBES (60 m, unless a mech within 15 m) | | |

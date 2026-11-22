@@ -273,6 +273,10 @@ CUBE_COLLECT = True    # on with FARM (kills drop the victim's cubes + 2); was o
 CUBE_MAX_M = 50            # walk this far for a cube when nobody is close
 CUBE_SAFE_M = 60           # "nobody close" = our target is farther than this
 CUBE_FIGHT_M = 12          # mid-fight, still grab cubes this close
+KILL_CUBES = True          # #25: after our kill, walk over its cubes (victim's cubes + 2) before the next fight...
+KILL_CUBES_S = 15.0        # ...for this long after the kill...
+KILL_CUBE_M = 60           # ...within this range...
+KILL_CUBE_SAFE_M = 15      # ...unless another mech is this close (then keep fighting). Sim: kill cubes picked 34% -> 48%
 
 # Fire the gun together with lightning/laser, and only lob mortars when the gun can't hit (combat.py)
 COMBINED_FIRE = True   # #20 offense-first: gun keeps firing alongside laser/lightning (was on in #9-#12, off since)
