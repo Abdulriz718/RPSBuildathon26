@@ -841,7 +841,8 @@ class Brain:
                 and not (visible_mech and hdist(mech.pos, (x, y)) < config.CRATE_FIGHT_M)):
             crgoal = self.crate_goal(obs)
         fgoal = None
-        if (config.FARM and not ffa and not hurry and not self.recovering and t < config.FARM_UNTIL_S
+        resting = config.HEAL_BEFORE_FARM and self.healing  # don't deal damage while regenerating
+        if (config.FARM and not ffa and not hurry and not self.recovering and not resting and t < config.FARM_UNTIL_S
                 and me["cubes"] < config.FARM_CUBES and t - self.last_mech_hurt >= config.FARM_CALM_S
                 and not (visible_mech and hdist(mech.pos, (x, y)) < config.FARM_FIGHT_M)):
             fgoal = self.farm_goal(obs)
@@ -950,8 +951,12 @@ class Brain:
                 goal, precise = spot, True
                 hide = reloading  # (a charging laser keeps its trigger held: combat.decide holds it out of sight)
             elif pair is not None:
-                goal, precise = (pair[0] if reloading else pair[1]), True
-                hide = reloading
+                gun = next((w for w in me["weapons"] if w and w["kind"] == "gun"), None)
+                low = (config.RELOAD_SMART and gun is not None and gun["reload"] <= 0
+                       and 0 < gun["ammo"] <= config.RELOAD_DUCK_AMMO)
+                duck = reloading or low  # nearly empty: get into cover first, reload there
+                goal, precise = (pair[0] if duck else pair[1]), True
+                hide = reloading or (low and hdist(pair[0], (x, y)) < config.COVER_REACHED_M + 0.5)
             else:
                 if config.STRAFE_JITTER:
                     self.juke(obs, target, t)
@@ -1060,6 +1065,13 @@ class Brain:
             if gun and gun["reload"] <= 0 and gun["ammo"] < gun["stats"]["mag"]:
                 fight["reload"] = True
         act.update(fight)
+        if config.RELOAD_SMART and not act.get("reload"):
+            gun = next((w for w in me["weapons"] if w and w["kind"] == "gun"), None)
+            gi = me["weapons"].index(gun) if gun is not None else None
+            if (gun is not None and gun["reload"] <= 0 and 0 < gun["ammo"] <= config.RELOAD_TOPUP_AMMO
+                    and not act["fire"][gi]
+                    and (target is None or hdist(target.pos, (x, y)) > config.RELOAD_TOPUP_M)):
+                act["reload"] = True  # top up while nothing close is shootable
         if config.SCAN_ALWAYS and mode == "FIGHT" and hide and target is not None and not any(act["fire"]):
             gun = next((w for w in me["weapons"] if w and w["kind"] == "gun"), None)
             charging = any(w and w.get("charge") for w in me["weapons"])
