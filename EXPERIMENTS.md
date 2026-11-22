@@ -284,3 +284,45 @@ The official record remains 3.4 followed by 3.17. No submission was made.
 Reproduce with `python tools/bench.py --tune-movement --seeds 1 5335629 --holdout-seeds 271828 7813031 --workers 4`.
 The replay benchmark measured 1.88 ms p99 with zero fallbacks. All 17 unit tests
 passed and the protocol checker received all 300 answers on time.
+
+## Sim hunter accuracy check (handoff step 1): no recalibration needed
+
+The handoff said real house bots hit 60-89% and the sim's 32% on us made real fights look half as deadly. Checked:
+
+- Real replay `mechanics-v2-16` pooled over all 16 bots: 1061 gun shots, 433 hits on mechs (41%) + 171 on drones
+  (16%) = 57%. The 60-89% figures were per-bot and included drone hits. With drone shots removed (hit at ~85%),
+  mech-on-mech accuracy is about **50%**. `duel-hard-4` (hard vs hard 1v1): 66% on 77 shots.
+- Sim house bots shooting each other in `tools/ffa.py` (6 matches): easy 36%, medium 44%, hard 55%, expert 68%,
+  pooled **51%**. That matches the real ~50%, so the aim model is already right.
+- Against us in `tools/practice.py` they hit 32-33% of shots. Removing all aim noise and reaction delay only lifts it
+  to 36%. Bullets that reach us miss by 0-2 m sideways: our bot changes direction during the 0.2-0.4 s flight.
+  So the gap is our movement, not hunter skill. The real hit rate on us is unknown (no replays of our matches).
+- New knobs kept for later what-ifs: `--squad noise_scale=0.5 react_scale=0.5`.
+
+## Auto-detect free-for-all (`AUTO_FFA`, off by default)
+
+Brain switches farm -> ffa once (alive drop) - (our `kill` events) >= 2 in the first 200 s. Practice house bots only
+die to us, so this should never fire in practice.
+
+| sim | variant | vs base | switched to ffa |
+|---|---|---|---|
+| practice, 144 paired | `AUTO_FFA=True` | -0.01 +-0.01 | 2/144 |
+| practice, 144 paired | threshold 1 | -0.03 +-0.03 | 15/144 |
+| ffa, 120 paired (base 10.91) | `AUTO_FFA=True` | -0.12 +-0.20 | 109/120, median t=18 s |
+| ffa, 120 paired | `MODE='ffa'` always | +0.00 +-0.46 | 120/120 |
+
+Detection works (fires early in a real FFA, almost never in practice), but ffa mode itself no longer beats farm in the
+current FFA sim (the earlier +1.05 was before the `19050b9` sim-bot changes). Left off. Flip it on only if ffa mode
+is re-tuned and wins again.
+
+## Heal between kills (`HEAL_BETWEEN`, brain.py HEAL mode)
+
+Below 70% HP, with no mech in sight and no hits either way for 3 s: break line of sight from the last threat, hold
+fire (dealing damage resets regen too) and reload, until 95% HP. Any damage taken ends it, so we fight back.
+
+- First try started after 1.5 s without being hit. That fired mid-fight during hunter reloads: 28 of 34 heal spells
+  ended with us shot at lower HP. Practice sim -0.17 +-0.08. Fixed by requiring no visible mech and no hits either way.
+- Fixed version, 12 matches instrumented: 8 heal spells, typically +10 to +40% HP before a hunter finds us.
+- Practice sim, 144 paired: start 70% **+0.09 +-0.05**, start 90% +0.08 +-0.07. Small, but no harm.
+
+| 11 | | | 3.40 behaviour + HEAL_BETWEEN (start 70%, stop 95%, calm 3 s) | | |

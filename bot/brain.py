@@ -80,6 +80,11 @@ class Brain:
         self.style_boost = False
         self.roof_spot = None  # (computed at, (x, y, z)) for STYLE "roof"
         self.anchor = None  # (circle, refresh time, position)
+        self.ffa_on = config.MODE == "ffa"
+        self.last_hurt = -1e9  # last time anything (incl. the zone) damaged us
+        self.healing = False   # HEAL_BETWEEN
+        self.our_kills = set()  # mech ids we killed (AUTO_FFA)
+        self.alive_max = 0
         # The map and nav grids are big and live all match: move them out of the GC's scans
         # so a collection can't stall a tick.
         gc.collect()
@@ -419,6 +424,10 @@ class Brain:
         for e in obs["events"]:
             if e["type"] in ("hit", "damaged"):
                 self.last_exchange = t
+            if e["type"] == "kill" and isinstance(e.get("target"), int) and e["target"] < 100:
+                self.our_kills.add(e["target"])
+            if e["type"] == "damaged":
+                self.last_hurt = t
             if e["type"] == "damaged" and e.get("by") is not None:
                 self.hurt_by[e["by"]] = t
                 if e["by"] in self.track.targets:
@@ -426,6 +435,10 @@ class Brain:
 
         if config.AVOID_FIGHT_SOUNDS or config.AVOID_PEOPLE:
             self.note_danger(obs, t)
+        if config.AUTO_FFA and not self.ffa_on and t < config.AUTO_FFA_MAX_T:
+            self.alive_max = max(self.alive_max, obs["alive"])
+            if self.alive_max - obs["alive"] - len(self.our_kills) >= config.AUTO_FFA_DEATHS:
+                self.ffa_on = True
 
         late = config.ENDGAME and (obs["alive"] <= config.ENDGAME_ALIVE or t >= config.ENDGAME_T)
         low = config.ENDGAME_LOW_HP if late else config.COVER_LOW_HP
@@ -444,12 +457,17 @@ class Brain:
 
         zgoal, hurry = self.zone_goal(obs)
         mech = self.pick_mech()
-        ffa = config.MODE == "ffa"
+        ffa = self.ffa_on
         target = self.ffa_target(t) if ffa else mech
         if mech is not None:
             self.threat = target if target is not None else mech
         threat = self.threat if self.threat and t - self.threat.last_seen < 6.0 else None
         visible_mech = mech is not None and mech.age == 0
+        # HEAL starts only between fights (nobody in sight, no hits either way for a while); being hit ends it
+        if not config.HEAL_BETWEEN or t - self.last_hurt < 0.5 or hp_frac >= config.HEAL_DONE:
+            self.healing = False
+        elif hp_frac < config.HEAL_START and not visible_mech and t - self.last_exchange >= config.HEAL_CALM_S:
+            self.healing = True
         dgoal = None if (visible_mech and not self.recovering) or hurry else self.drop_goal(obs)
         defensive_tracks = (self.track.targets_sorted("mech", max_age=config.TRACK_AIM_MEMORY_S)
                             if config.DEFENSIVE_EVASION else [])
@@ -504,6 +522,15 @@ class Brain:
                 act["take"] = wgoal[0]
                 if wgoal[2] is not None:
                     act["drop"] = wgoal[2]
+        elif self.healing and not ffa:
+            mode, hide = "HEAL", True
+            foe = threat or mech
+            if foe is not None:
+                goal = self.retreat_goal(obs, foe, t)
+                stand = self.hidden_from(me, foe)
+            else:
+                goal, stand = (x, y), True
+            target = None
         elif (config.MULTI_DISENGAGE and target is not None and len(self.known_attackers(t, x, y)) >= 2
               and not (target.hp is not None and target.hp < config.MULTI_FINISH_HP)):
             mode = "DISENGAGE"
@@ -573,7 +600,7 @@ class Brain:
             mx, my, jump, boost = self.nav.next_step(me["pos"], goal, t, 1.0 if far else 0.0, precise=precise)
             if not far:
                 mx = my = 0.0
-            boost = boost or (mode == "ZONE" and far) or (mode in ("RECOVER", "AVOID", "DISENGAGE") and far and me["energy"] > 30)
+            boost = boost or (mode == "ZONE" and far) or (mode in ("RECOVER", "AVOID", "DISENGAGE", "HEAL") and far and me["energy"] > 30)
         bearing = None
         if config.DEFENSIVE_EVASION:
             bearing = self.track.recent_shot_bearing(config.LATE_ANCHOR_SOUND_AGE_S)
@@ -598,7 +625,7 @@ class Brain:
 
         # torso
         act["aim"] = [self.idle_yaw(mx, my, me, sweep=config.SWEEP_FOR_WEAPONS and not self.has_laser(me)), 0.0]
-        if target is None and threat is not None and mode in ("RECOVER", "AVOID"):
+        if target is None and threat is not None and mode in ("RECOVER", "AVOID", "HEAL"):
             act["aim"] = [math.atan2(threat.pos[1] - y, threat.pos[0] - x), 0.0]  # never show our back
         elif (config.DEFENSIVE_EVASION and mode == "HOLD" and target is None
               and threat is None and bearing is None and (mx or my)):

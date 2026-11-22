@@ -40,6 +40,8 @@ SQUAD = {
     "wave_per_kill": 1,     # extra hunters released per house bot we kill
     "all_hunt_t": 300.0,    # after this match time every house bot hunts us
     "engage_m": 80.0,       # a non-hunter that sees us within this range fights us too
+    "noise_scale": 1.0,     # multiplies every house bot's aim noise (duel.SKILLS noise_deg)
+    "react_scale": 1.0,     # multiplies every house bot's velocity-reading delay (duel.SKILLS react_s)
 }
 
 # Scored versions: (label, git ref or "kit", real practice score)
@@ -113,6 +115,9 @@ def _init_worker(bot_dir, squad):
     SQUAD.update(squad)
     D.ERRATIC = bool(SQUAD.get("erratic"))
     D.DODGE = bool(SQUAD.get("dodge"))
+    for k in D.SKILLS.values():
+        k["noise_deg"] *= SQUAD.get("noise_scale", 1.0)
+        k["react_s"] *= SQUAD.get("react_scale", 1.0)
     S.shared_world()
     if bot_dir and Path(bot_dir).resolve() != (S.ROOT / "bot").resolve():
         for mod in ("config", "main", "brain", "combat", "track", "loot", "defense", "gridbuild"):
@@ -189,6 +194,7 @@ def run_match(args):
     memory, last_obs_t = {}, -1.0
     dead_before = 0
     kill_log = []  # (t, our hp, hunters within 120 m) at each kill
+    ffa_t = None  # when the bot first played in ffa mode (AUTO_FFA should never fire in practice)
     while sim.t < max_t and ours.alive and any(b.m.alive for b in bots):
         if sim.tick % 2 == 0:
             obs = sim.observe(ours, memory, last_obs_t)
@@ -200,6 +206,8 @@ def run_match(args):
                 a = {}
             a = dict(a)
             a.pop("debug", None)
+            if ffa_t is None and getattr(getattr(bot, "brain", None), "ffa_on", False):
+                ffa_t = sim.t
             ours.action = a
             for b in bots:
                 if b.m.alive:
@@ -227,7 +235,7 @@ def run_match(args):
             "shots": ours.shots, "hits": ours.hits,
             "h_shots": sum(b.m.shots for b in bots), "h_hits": sum(b.m.hits for b in bots),
             "near_at_death": sum(1 for b in bots if b.m.alive and math.dist(b.m.pos, ours.pos) < 120),
-            "kill_log": kill_log, "cubes": ours.cubes, "upgrades": list(ours.upgrades),
+            "kill_log": kill_log, "ffa_t": ffa_t, "cubes": ours.cubes, "upgrades": list(ours.upgrades),
             "drones_killed": sum(1 for b in sim.npc_brains if not b["m"].alive)}
 
 
@@ -248,6 +256,9 @@ def line(label, rs, base=None):
     out += f" | hit% ours {acc:.0f} theirs {hacc:.0f}"
     out += (f" | kills {statistics.mean(r['kills'] for r in rs):.1f} | survived {statistics.median(r['t'] for r in rs):.0f}s"
             f" | alive at end {sum(r['alive'] for r in rs)}")
+    trips = sum(r.get("ffa_t") is not None for r in rs)
+    if trips:
+        out += f" | ffa mode in {trips}/{len(rs)}"
     print(out, flush=True)
 
 
