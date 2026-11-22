@@ -21,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import sim as S  # noqa: E402
 
+DODGE = False  # hunters see our bullets coming (protocol: visible projectiles have pos+vel) and sidestep
+ERRATIC = False  # hunters move like the real house bots: random jumps + jet bursts, boosted strafes, quick flips
+
 SKILLS = {
     "easy": dict(noise_deg=2.2, react_s=0.5, lead=False, engage_m=70, hold_m=45, flip=(1.5, 3.0), boost_p=0.0),
     "medium": dict(noise_deg=1.4, react_s=0.3, lead=True, engage_m=85, hold_m=55, flip=(1.0, 2.5), boost_p=0.1),
@@ -39,6 +42,34 @@ class Hunter:
         self.noise = (0.0, 0.0)
         self.boost = False
         self.loot = True
+        self.jet_until = -1.0  # erratic movement: jet burst after a jump
+
+    def sidestep(self):
+        """Move perpendicular to the most urgent enemy bullet that would hit us within 0.8 s."""
+        m, best = self.m, None
+        cx, cy = m.pos[0], m.pos[1]
+        for p in self.sim.projectiles:
+            if p["owner"] == m.id or p["kind"] != "gun":
+                continue
+            own = self.sim.mechs.get(p["owner"])
+            if own is not None and own.team is not None and own.team == m.team:
+                continue
+            vx, vy = p["vel"][0], p["vel"][1]
+            sp2 = vx * vx + vy * vy
+            if sp2 < 1:
+                continue
+            rx, ry = cx - p["pos"][0], cy - p["pos"][1]
+            eta = (rx * vx + ry * vy) / sp2
+            if not 0 < eta < 0.8:
+                continue
+            miss = abs(rx * vy - ry * vx) / math.sqrt(sp2)
+            if miss > m.radius + 1.0 or not self.sim.world.los(p["pos"], m.center()):
+                continue
+            if best is None or eta < best[0]:
+                side = 1 if (rx * vy - ry * vx) >= 0 else -1
+                n = math.sqrt(sp2)
+                best = (eta, (side * vy / n, -side * vx / n))
+        return None if best is None else best[1]
 
     def loot_goal(self, target_d, los):
         """House bots grab a 2nd weapon fast. Hunters know all pickups (the squad shares vision)."""
@@ -90,6 +121,19 @@ class Hunter:
                 self.sign = -self.sign
                 mx, my = -mx, -my
             act.update(move=[mx, my], boost=self.boost and m.energy > 30)
+            if ERRATIC:
+                if t >= self.flip_at - self.rng.uniform(0, 0.6):
+                    self.flip_at = min(self.flip_at, t + self.rng.uniform(0.3, 0.9))
+                if m.grounded and self.rng.random() < 0.06 and m.energy > 35:  # ~every 1.7 s at 10 Hz
+                    act["jump"] = True
+                    self.jet_until = t + self.rng.uniform(0.2, 0.7)
+                act["boost"] = (not m.grounded and t < self.jet_until) or (m.grounded and m.energy > 50
+                                                                          and self.rng.random() < 0.5)
+        if DODGE:
+            sd = self.sidestep()
+            if sd is not None:
+                act["move"] = list(sd)
+                act["boost"] = m.energy > 15
         # aim
         if int(t * 10) % 3 == 0:
             s = math.radians(k["noise_deg"])

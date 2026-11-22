@@ -35,6 +35,8 @@ import sim as S  # noqa: E402
 
 # Squad rules (calibrated with --calibrate)
 SQUAD = {
+    "erratic": False,       # house bots jump, jet and boost-strafe like the real ones
+    "dodge": False,         # house bots sidestep our bullets they can see coming
     "wave_per_kill": 1,     # extra hunters released per house bot we kill
     "all_hunt_t": 300.0,    # after this match time every house bot hunts us
     "engage_m": 80.0,       # a non-hunter that sees us within this range fights us too
@@ -50,6 +52,7 @@ HISTORY = [
     ("#6 no-retreat config", "5570130", 2.31),
     ("#7 weapon grab", "1079658", 3.23),
     ("roof climbing", "4af2045", 3.40),
+    ("kite 120-170", "KITE", 3.10),
 ]
 
 
@@ -108,6 +111,8 @@ def _init_worker(bot_dir, squad):
     bot_dir so an old version plays with its own settings."""
     global _BOT_DIR
     SQUAD.update(squad)
+    D.ERRATIC = bool(SQUAD.get("erratic"))
+    D.DODGE = bool(SQUAD.get("dodge"))
     S.shared_world()
     if bot_dir and Path(bot_dir).resolve() != (S.ROOT / "bot").resolve():
         for mod in ("config", "main", "brain", "combat", "track", "loot", "defense", "gridbuild"):
@@ -122,6 +127,12 @@ def export_version(ref, dest):
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
+    if ref == "KITE":
+        for f in (S.ROOT / "bot").glob("*.py"):
+            shutil.copy(f, dest / f.name)
+        cfgp = dest / "config.py"
+        cfgp.write_text(cfgp.read_text(encoding="utf-8").replace('STYLE = "default"', 'STYLE = "kite"'), encoding="utf-8")
+        return dest
     if ref == "kit":
         kit = S.ROOT / "mechfight-kit" / "mechfight-kit" / "python"
         src = (kit / "example_bot.py").read_text(encoding="utf-8").replace("mf.run(Bot)", "")
@@ -213,6 +224,8 @@ def run_match(args):
     return {"seed": seed, "score": 16 - place, "place": place, "t": ours.death_t or sim.t,
             "kills": sum(not b.m.alive for b in bots), "alive": ours.alive,
             "loadout": "+".join(w["kind"] for w in ours.weapons if w),
+            "shots": ours.shots, "hits": ours.hits,
+            "h_shots": sum(b.m.shots for b in bots), "h_hits": sum(b.m.hits for b in bots),
             "near_at_death": sum(1 for b in bots if b.m.alive and math.dist(b.m.pos, ours.pos) < 120),
             "kill_log": kill_log, "cubes": ours.cubes, "upgrades": list(ours.upgrades),
             "drones_killed": sum(1 for b in sim.npc_brains if not b["m"].alive)}
@@ -230,6 +243,9 @@ def line(label, rs, base=None):
     if base is not None:
         d = [a - b for a, b in zip(sc, [r["score"] for r in base])]
         out += f" | vs base {statistics.mean(d):+.2f} +-{statistics.stdev(d) / math.sqrt(len(d)):.2f}"
+    acc = 100 * sum(r["hits"] for r in rs) / max(1, sum(r["shots"] for r in rs))
+    hacc = 100 * sum(r["h_hits"] for r in rs) / max(1, sum(r["h_shots"] for r in rs))
+    out += f" | hit% ours {acc:.0f} theirs {hacc:.0f}"
     out += (f" | kills {statistics.mean(r['kills'] for r in rs):.1f} | survived {statistics.median(r['t'] for r in rs):.0f}s"
             f" | alive at end {sum(r['alive'] for r in rs)}")
     print(out, flush=True)

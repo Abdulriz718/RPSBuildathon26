@@ -197,7 +197,7 @@ LASER_ROAM_S = 12          # pick a new waypoint this often
 LASER_ROAM_STEP_M = 70     # waypoint distance
 
 # Play styles (brain.py style_fight / HOLD). "default" = cover peek and strafe at whatever range.
-STYLE = "kite"             # "default", "kite", "rush", "roof", "assassin". kite: practice sim +0.35 +-0.13
+STYLE = "default"          # "default", "kite", "rush", "roof", "assassin". kite: sim +0.35 but server 3.10 (sim had no trees)
 KITE_MIN_M = 120           # kite: back off (with boost) when a target is closer than this...
 KITE_MAX_M = 170           # ...and close in when farther than this
 KITE_BOOST_ENERGY = 20
@@ -211,3 +211,8 @@ ROOF_STYLE_CACHE_S = 10
 ASSASSIN_HP = 0.8          # assassin: go looking for fights while HP is above this fraction
 ASSASSIN_UNTIL_S = 360
 ASSASSIN_SOUND_S = 4.0
+
+# Shot selection vs dodgers (combat.engage): skip gun shots whose flight is longer than this at grounded targets
+# (vertical speed under FIRE_AIRBORNE_VZ). In the air a mech can barely change course (air_accel 12 vs 58.5).
+FIRE_MAX_FLIGHT_S = None   # e.g. 0.3 (~75 m); None = always fire
+FIRE_AIRBORNE_VZ = 1.0
